@@ -1,6 +1,6 @@
 # Lucy notes daemon (WIP)
 
-Modular notes-manager daemon.
+Lucy daemon is modular notes-manager.
 
 Your notes are just files. Use any editor you like. No editor plugins, accounts or clouds.
 
