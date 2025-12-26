@@ -4,7 +4,7 @@ Modular notes-manager daemon.
 
 Your notes are just files. Use any editor you like. No editor plugins, accounts or clouds.
 
-Lucy monitors your note folders and, on file changes, runs modules on the file (formatter, sync, git, etc).  
+Lucy daemon monitors your note folder. Every time you edit something, it runs modules on that file (formatter, sync, git, etc).
 Lucy can also read Unix-style flags written inside the note file and pass them to modules.
 
 ## How to use it
