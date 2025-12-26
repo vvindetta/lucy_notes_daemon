@@ -1,3 +1,9 @@
+config.txt
+archive/
+ext_changer_legacy.py
+formatter_legacy.py
+test_notes/
+
 # ---> Python
 # Byte-compiled / optimized / DLL files
 __pycache__/
