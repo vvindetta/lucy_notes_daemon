@@ -3,8 +3,8 @@ from typing import List
 
 from watchdog.events import FileSystemEvent
 
-from note_manager.lib.args import parse_args
-from note_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.lib.args import parse_args
+from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 
 class Renamer(AbstractModule):

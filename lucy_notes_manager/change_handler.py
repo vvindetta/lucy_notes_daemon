@@ -4,8 +4,12 @@ from typing import List, Optional, Tuple
 
 from watchdog.events import FileSystemEventHandler
 
-from note_manager.lib.args import get_args_from_first_file_line, merge_args, parse_args
-from note_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.lib.args import (
+    get_args_from_first_file_line,
+    merge_args,
+    parse_args,
+)
+from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +68,18 @@ class ChangeHandler(FileSystemEventHandler):
         else:
             logger.info(f"{str(event.event_type).capitalize()}: {event.src_path}")
 
-        self.known_file_args, self.unknown_file_args = get_args_from_first_file_line(
+        event_known_file_args, event_unknown_file_args = get_args_from_first_file_line(
             path=file_path, template=self.template
         )
 
-        # system_merged_args = merge_args(
-        #     args=self.system_args,
-        #     overwrite_args=self.known_file_args,
-        # )
-        self.modules_args = self.modules_args + self.unknown_file_args
+        event_system_merged_args = merge_args(
+            args=self.system_args,
+            overwrite_args=event_known_file_args,
+        )
+        event_modules_args = self.modules_args + event_unknown_file_args
 
-        force_modules = self.system_args.get("force") or []
-        exclude_modules = self.system_args.get("exclude") or []
+        force_modules = event_system_merged_args.get("force") or []
+        exclude_modules = event_system_merged_args.get("exclude") or []
 
         for module in self.modules:
             if module.name in exclude_modules and module.name not in force_modules:
@@ -83,7 +87,7 @@ class ChangeHandler(FileSystemEventHandler):
 
             method = getattr(module, event.event_type, None)
             if method:
-                result = method(args=self.modules_args, event=event)
+                result = method(args=event_modules_args, event=event)
 
                 if result:
                     logger.info(f"Module {module.name} change something.")

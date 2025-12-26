@@ -8,9 +8,9 @@ from typing import Dict, List, Optional, Tuple, cast
 
 from watchdog.events import FileSystemEvent
 
-from note_manager.lib import notify
-from note_manager.lib.args import parse_args
-from note_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.lib import notify
+from lucy_notes_manager.lib.args import parse_args
+from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 logger = logging.getLogger(__name__)
 

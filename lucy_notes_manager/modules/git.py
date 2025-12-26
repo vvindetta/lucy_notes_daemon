@@ -7,9 +7,9 @@ from datetime import datetime
 from queue import Empty, Queue
 from typing import Any, Dict, List, Union, cast
 
-from note_manager.lib import notify
-from note_manager.lib.args import parse_args
-from note_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.lib import notify
+from lucy_notes_manager.lib.args import parse_args
+from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 PathLike = Union[str, bytes]
 KnownArgs = Dict[str, List[Any]]

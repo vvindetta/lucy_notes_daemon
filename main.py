@@ -3,13 +3,13 @@ import time
 
 from watchdog.observers import Observer
 
-from note_manager.change_handler import ChangeHandler
-from note_manager.lib.args import setup_args
-from note_manager.modules.banner_inserter import BannerInserter
-from note_manager.modules.git import Git
-from note_manager.modules.plasma_todo_sync import PlasmaNotesSync
-from note_manager.modules.renamer import Renamer
-from note_manager.modules.todo_formatter import TodoFormatter
+from lucy_notes_manager.change_handler import ChangeHandler
+from lucy_notes_manager.lib.args import setup_args
+from lucy_notes_manager.modules.banner_inserter import BannerInserter
+from lucy_notes_manager.modules.git import Git
+from lucy_notes_manager.modules.plasma_todo_sync import PlasmaNotesSync
+from lucy_notes_manager.modules.renamer import Renamer
+from lucy_notes_manager.modules.todo_formatter import TodoFormatter
 
 TEMPLATE_STARTUP_ARGS = (
     ("--config_path", str),

@@ -4,7 +4,7 @@ from typing import List
 
 from watchdog.events import FileSystemEvent
 
-from note_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 
 class TodoFormatter(AbstractModule):
