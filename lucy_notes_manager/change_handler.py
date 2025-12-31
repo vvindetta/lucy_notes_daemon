@@ -87,13 +87,13 @@ class ChangeHandler(FileSystemEventHandler):
 
             method = getattr(module, event.event_type, None)
             if method:
-                logging.info(f"STARTED: {module}")
+                logging.info(f"STARTED: {module.name}")
                 result = method(args=event_modules_args, event=event)
 
                 if result:
                     logger.info(f"CHANGE: {module.name} write file")
                     self._mark_to_ignore(file_path)
-                logging.info(f"END: {module}")
+                logging.info(f"END: {module.name}")
 
     def on_modified(self, event):
         self._process_file(event=event)
