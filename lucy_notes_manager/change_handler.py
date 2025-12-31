@@ -38,7 +38,7 @@ class ChangeHandler(FileSystemEventHandler):
         input_path = os.path.abspath(input_path)
 
         self._ignore_paths.add(input_path)
-        logger.info(f"Ivent: {input_path} marked to IGNORE")
+        logger.info(f"MARKED TO IGNORE: {input_path}")
         return False
 
     def _check_and_delete_ignore(self, input_path: str) -> bool:
@@ -46,7 +46,7 @@ class ChangeHandler(FileSystemEventHandler):
 
         if input_path in self._ignore_paths:
             self._ignore_paths.remove(input_path)
-            logger.info(f"Ivent: {input_path} IGNORED")
+            logger.info(f"IGNORED: {input_path}")
             return True
         return False
 
@@ -87,11 +87,13 @@ class ChangeHandler(FileSystemEventHandler):
 
             method = getattr(module, event.event_type, None)
             if method:
+                logging.info(f"STARTED: {module}")
                 result = method(args=event_modules_args, event=event)
 
                 if result:
-                    logger.info(f"Module {module.name} change something.")
+                    logger.info(f"CHANGE: {module.name} write file")
                     self._mark_to_ignore(file_path)
+                logging.info(f"END: {module}")
 
     def on_modified(self, event):
         self._process_file(event=event)
