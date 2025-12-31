@@ -314,13 +314,18 @@ class _PlasmaBoldAwareParser(HTMLParser):
     Bold is considered if:
     - <b>, <strong>
     - <span style="...font-weight:600/700/bold...">
+    - <p>/<li>/<font> style has font-weight (Qt often puts bold on block tags)
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._in_body = False
         self._bold_depth = 0
+
         self._span_bold_stack: List[bool] = []
+
+        # NEW: bold may be applied to block tags (<p>, <li>) or <font>
+        self._tag_style_bold: Dict[str, List[bool]] = {"p": [], "li": [], "font": []}
 
         self._lines: List[List[Tuple[str, bool]]] = [[]]
 
@@ -332,6 +337,25 @@ class _PlasmaBoldAwareParser(HTMLParser):
             return
         b = self._bold_depth > 0
         self._lines[-1].append((text, b))
+
+    def _push_tag_style_bold(self, tag: str, attrs) -> None:
+        style = ""
+        for k, v in attrs:
+            if k.lower() == "style" and isinstance(v, str):
+                style = v
+                break
+        is_bold = _style_is_bold(style)
+        self._tag_style_bold[tag].append(is_bold)
+        if is_bold:
+            self._bold_depth += 1
+
+    def _pop_tag_style_bold(self, tag: str) -> None:
+        st = self._tag_style_bold.get(tag)
+        if not st:
+            return
+        was_bold = st.pop() if st else False
+        if was_bold:
+            self._bold_depth = max(0, self._bold_depth - 1)
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -358,6 +382,11 @@ class _PlasmaBoldAwareParser(HTMLParser):
                 self._bold_depth += 1
             return
 
+        # NEW: detect bold set on <p>/<li>/<font> style
+        if tag in ("p", "li", "font"):
+            self._push_tag_style_bold(tag, attrs)
+            return
+
         if tag == "br":
             self._newline()
             return
@@ -380,6 +409,13 @@ class _PlasmaBoldAwareParser(HTMLParser):
                 was_bold = self._span_bold_stack.pop()
                 if was_bold:
                     self._bold_depth = max(0, self._bold_depth - 1)
+            return
+
+        # NEW: close tag-style bold
+        if tag in ("p", "li", "font"):
+            self._pop_tag_style_bold(tag)
+            if tag in ("p", "li"):
+                self._newline()
             return
 
         if tag in ("p", "li"):
@@ -527,7 +563,6 @@ def _replace_bold_items_in_lines(
     - If MAIN has more bold runs than items -> those extra runs become non-bold (unbold)
     - If items has more -> append new bold lines at end
     """
-    # normalize items
     items = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in new_items]
     items = [it for it in items if it]
 
@@ -544,7 +579,6 @@ def _replace_bold_items_in_lines(
                 i += 1
                 continue
 
-            # bold run start; in our parser, runs are already merged
             if k < len(items):
                 new_line.append((items[k], True))
                 k += 1
