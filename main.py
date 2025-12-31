@@ -7,7 +7,7 @@ from lucy_notes_manager.change_handler import ChangeHandler
 from lucy_notes_manager.lib.args import setup_args
 from lucy_notes_manager.modules.banner_inserter import BannerInserter
 from lucy_notes_manager.modules.git import Git
-from lucy_notes_manager.modules.plasma_todo_sync import PlasmaNotesSync
+from lucy_notes_manager.modules.plasma_sync import PlasmaSync
 from lucy_notes_manager.modules.renamer import Renamer
 from lucy_notes_manager.modules.todo_formatter import TodoFormatter
 
@@ -26,7 +26,7 @@ DEFAULT_LOGGING_FORMAT = (
 MODULES = [
     (BannerInserter.priority, BannerInserter()),
     (Renamer.priority, Renamer()),
-    (PlasmaNotesSync.priority, PlasmaNotesSync()),
+    (PlasmaSync.priority, PlasmaSync()),
     (TodoFormatter.priority, TodoFormatter()),
     (Git.priority, Git()),
 ]
