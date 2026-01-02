@@ -40,15 +40,18 @@ class FileHandler(FileSystemEventHandler):
         file_path = event.dest_path if event.event_type == "moved" else event.src_path
 
         abs_path = os.path.abspath(file_path)
-        if ".git" in abs_path.split(os.sep):
-            return
-
-        if self._check_and_delete_ignore(input_path=file_path):
+        if any(part == ".git" for part in abs_path.split(os.sep)):
             return
 
         if event.event_type == "moved":
+            if self._check_and_delete_ignore(
+                event.src_path
+            ) or self._check_and_delete_ignore(event.dest_path):
+                return
             logger.info(f"EVENT: Moved: {event.src_path} → {event.dest_path}")
         else:
+            if self._check_and_delete_ignore(event.src_path):
+                return
             logger.info(
                 f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}"
             )
@@ -72,7 +75,7 @@ class FileHandler(FileSystemEventHandler):
 
             run_action = getattr(module, event.event_type, None)
             if not run_action:
-                return
+                continue
 
             logging.info(f"STARTED: {module.name}")
 
@@ -95,21 +98,19 @@ class FileHandler(FileSystemEventHandler):
             )
 
     def _check_and_delete_ignore(self, input_path: str) -> bool:
-        abs_path = os.path.abspath(input_path)
-
-        count = self._ignore_paths.get(abs_path, 0)
+        count = self._ignore_paths.get(input_path, 0)
         if count <= 0:
             return False
 
         if count == 1:
-            del self._ignore_paths[abs_path]
+            del self._ignore_paths[input_path]
         else:
-            self._ignore_paths[abs_path] = count - 1
+            self._ignore_paths[input_path] = count - 1
 
         logger.info(
             "IGNORED: %s (remaining=%d)\n\n",
-            abs_path,
-            self._ignore_paths.get(abs_path, 0),
+            input_path,
+            self._ignore_paths.get(input_path, 0),
         )
         return True
 
