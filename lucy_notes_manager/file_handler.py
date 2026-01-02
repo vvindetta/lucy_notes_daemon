@@ -107,7 +107,9 @@ class FileHandler(FileSystemEventHandler):
             self._ignore_paths[abs_path] = count - 1
 
         logger.info(
-            "IGNORED: %s (remaining=%d)", abs_path, self._ignore_paths.get(abs_path, 0)
+            "IGNORED: %s (remaining=%d)\n\n",
+            abs_path,
+            self._ignore_paths.get(abs_path, 0),
         )
         return True
 
