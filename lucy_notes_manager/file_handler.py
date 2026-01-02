@@ -81,7 +81,7 @@ class FileHandler(FileSystemEventHandler):
                 self._mark_to_ignore(ignore_paths=ignore_paths)
 
             logging.info(f"END: {module.name}")
-        logging.info("\n\n")
+        logging.info("--- END ---\n\n")
 
     def _mark_to_ignore(self, ignore_paths: List[str]) -> None:
         for path in ignore_paths:
