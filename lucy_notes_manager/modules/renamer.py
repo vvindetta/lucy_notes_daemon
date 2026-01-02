@@ -8,32 +8,45 @@ from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 
 class Renamer(AbstractModule):
-    name = "renamer"
-    priority = 10
+    name: str = "renamer"
+    priority: int = 10
 
     template = (("--r", str),)
 
-    def modified(self, args: List[str], event: FileSystemEvent) -> bool:
+    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         known_args, _ = parse_args(Renamer.template, args)
-        if not known_args.get("r"):
-            return False
+        r_vals = known_args.get("r")
+        if not r_vals:
+            return None
 
-        new_name = known_args["r"]
+        # parse_args returns List[...] for each key
+        new_name_raw = r_vals[0]
+        if not isinstance(new_name_raw, str) or not new_name_raw.strip():
+            return None
 
-        old_path = event.src_path
+        old_path = getattr(event, "src_path", None)
+        if not old_path:
+            return None
+
+        old_path = os.path.abspath(str(old_path))
         dir_path = os.path.dirname(old_path)
-        new_path = os.path.join(dir_path, new_name[0])
+        new_path = os.path.abspath(os.path.join(dir_path, new_name_raw.strip()))
 
         if old_path == new_path:
-            return False
+            return None
 
+        # Prevent renaming into an existing directory
         if os.path.isdir(new_path):
-            return False
+            return None
 
         try:
             os.rename(old_path, new_path)
-            return False
+
+            # We changed filesystem. We want to ignore the follow-up events
+            # produced by this rename. Return BOTH paths to ignore.
+            return [old_path, new_path]
+
         except FileNotFoundError:
-            return False
+            return None
         except OSError:
-            return False
+            return None

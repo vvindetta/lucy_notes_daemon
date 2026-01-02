@@ -18,12 +18,6 @@ class AbstractModule(ABC):
     name: str
 
     """
-    Execution priority.
-    Lower numbers run first. Default for all modules is 20.
-    """
-    priority: int = 20
-
-    """
     CLI-style flags this module understands.
 
     Example:
@@ -34,30 +28,30 @@ class AbstractModule(ABC):
     """
     template: Tuple[Tuple[str, type], ...] = ()
 
-    def created(self, args: List[str], event: FileSystemEvent) -> bool:
+    def created(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         """
         Called when a file is created.
-        Return True/False == Did func change something in file?
+        May return List of file paths to ignore. Did func change something in file?
         """
-        return False
+        return None
 
-    def modified(self, args: List[str], event: FileSystemEvent) -> bool:
+    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         """
         Called when a file is modified.
-        Return True/False == Did func change something in file?
+        May return List of file paths to ignore. Did func change something in file?
         """
-        return False
+        return None
 
-    def moved(self, args: List[str], event: FileSystemEvent) -> bool:
+    def moved(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         """
         Called when a file is moved.
-        Return True/False == Did func change something in file?
+        May return List of file paths to ignore. Did func change something in file?
         """
-        return False
+        return None
 
-    def deleted(self, args: List[str], event: FileSystemEvent) -> bool:
+    def deleted(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         """
         Called when a file is deleted.
-        Return True/False == Did func change something in file?
+        May return List of file paths to ignore. Did func change something in file?
         """
-        return False
+        return None

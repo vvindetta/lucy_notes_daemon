@@ -7,7 +7,9 @@ from datetime import datetime
 from queue import Empty, Queue
 from typing import Any, Dict, List, Union, cast
 
-from lucy_notes_manager.lib import notify
+from watchdog.events import FileSystemEvent
+
+from lucy_notes_manager.lib import safe_notify
 from lucy_notes_manager.lib.args import parse_args
 from lucy_notes_manager.modules.abstract_module import AbstractModule
 
@@ -28,11 +30,11 @@ class _RepoBatch:
 
 
 class Git(AbstractModule):
-    name = "git"
-    priority = 50
+    name: str = "git"
+    priority: int = 50
 
-    default_commit_message = "Auto-commit"
-    default_timestamp_format = "%Y-%m-%d_%H-%M-%S"
+    default_commit_message: str = "Auto-commit"
+    default_timestamp_format: str = "%Y-%m-%d_%H-%M-%S"
 
     # NOTE: --gkey must be PRIVATE key path (no .pub)
     template = (
@@ -43,27 +45,25 @@ class Git(AbstractModule):
     )
 
     # ---- performance knobs ----
-    debounce_seconds = 0.8  # merge events inside this window
-    git_timeout_sec = 8  # git add/status/commit timeout
-    push_timeout_sec = 20  # git push timeout
-    notify_cooldown_sec = 5.0  # prevent notify spam
-    push_backoff_start_sec = 5.0  # backoff if push fails
-    push_backoff_max_sec = 120.0
+    debounce_seconds: float = 0.8  # merge events inside this window
+    git_timeout_sec: float = 8  # git add/status/commit timeout
+    push_timeout_sec: float = 20  # git push timeout
+    push_backoff_start_sec: float = 5.0  # backoff if push fails
+    push_backoff_max_sec: float = 120.0
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._q: Queue[tuple[str, str, list[str], KnownArgs]] = Queue()
         self._pending: dict[str, _RepoBatch] = {}
         self._pending_lock = threading.Lock()
 
-        # throttle notifications (key -> last_time)
-        self._last_notify: dict[str, float] = {}
-
         # push backoff per repo
         self._push_next_allowed_at: dict[str, float] = {}
         self._push_backoff: dict[str, float] = {}
 
-        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker: threading.Thread = threading.Thread(
+            target=self._worker_loop, daemon=True
+        )
         self._worker.start()
 
     # ---------------- small utils ----------------
@@ -76,7 +76,7 @@ class Git(AbstractModule):
 
     @staticmethod
     def _path_is_inside_git_dir(path: str) -> bool:
-        # extra protection (even if your ChangeHandler misses it)
+        # extra protection (even if ChangeHandler already ignores .git)
         parts = os.path.abspath(path).split(os.sep)
         return ".git" in parts
 
@@ -93,14 +93,6 @@ class Git(AbstractModule):
             if parent == cur:
                 return None
             cur = parent
-
-    def _notify_throttled(self, key: str, message: str) -> None:
-        now = time.time()
-        last = self._last_notify.get(key, 0.0)
-        if now - last < self.notify_cooldown_sec:
-            return
-        self._last_notify[key] = now
-        notify(message=message)
 
     # ---------------- git env / run ----------------
 
@@ -122,13 +114,12 @@ class Git(AbstractModule):
 
         key_path = os.path.abspath(os.path.expanduser(key_raw))
         if not os.path.isfile(key_path):
-            self._notify_throttled(
-                key=f"gkey-missing:{key_path}",
+            safe_notify(
+                name=f"gkey-missing:{key_path}",
                 message=f"SSH key not found:\n{key_path}",
             )
             return env
 
-        # IMPORTANT: this affects push/fetch over SSH only.
         env["GIT_SSH_COMMAND"] = (
             f'ssh -i "{key_path}" '
             f"-o IdentitiesOnly=yes "
@@ -187,14 +178,9 @@ class Git(AbstractModule):
             out.append(path_part)
         return out
 
-    def _build_commit_message(
-        self,
-        batch: _RepoBatch,
-        changed_paths: list[str],
-    ) -> str:
+    def _build_commit_message(self, batch: _RepoBatch, changed_paths: list[str]) -> str:
         et = "+".join(sorted(batch.event_types)) if batch.event_types else "change"
 
-        # show a short list to keep message readable
         names = [os.path.basename(p) for p in changed_paths if p]
         if not names and batch.hinted_paths:
             names = [os.path.basename(p) for p in sorted(batch.hinted_paths)]
@@ -217,7 +203,6 @@ class Git(AbstractModule):
     def _enqueue(
         self, repo_root: str, event_type: str, paths: list[str], known: KnownArgs
     ) -> None:
-        # paths should already be str
         self._q.put((repo_root, event_type, paths, known))
 
     def _worker_loop(self) -> None:
@@ -228,7 +213,7 @@ class Git(AbstractModule):
                 now = time.time()
 
                 base_msg = self._get_base_msg(known)
-                tsmsg = bool(known.get("tsmsg"))
+                tsmsg = bool(known.get("tsmsg"))  # keep old semantics
                 tsfmt = self._get_tsfmt(known)
                 env = self._git_env(known)
 
@@ -281,13 +266,16 @@ class Git(AbstractModule):
                 root, ["add", "-A"], env, timeout_sec=self.git_timeout_sec
             )
         except subprocess.TimeoutExpired:
-            self._notify_throttled(f"timeout:add:{root}", f"git add timed out:\n{root}")
+            safe_notify(
+                name=f"timeout:add:{root}", message=f"git add timed out:\n{root}"
+            )
             return
 
         if p_add.returncode != 0:
             err = (p_add.stderr or p_add.stdout or "git add failed").strip()
-            self._notify_throttled(
-                f"addfail:{root}", f"Repository:\n{root}\n\nError:\n{err[:1200]}"
+            safe_notify(
+                name=f"addfail:{root}",
+                message=f"Repository:\n{root}\n\nError:\n{err[:1200]}",
             )
             return
 
@@ -297,15 +285,16 @@ class Git(AbstractModule):
                 root, ["status", "--porcelain"], env, timeout_sec=self.git_timeout_sec
             )
         except subprocess.TimeoutExpired:
-            self._notify_throttled(
-                f"timeout:status:{root}", f"git status timed out:\n{root}"
+            safe_notify(
+                name=f"timeout:status:{root}", message=f"git status timed out:\n{root}"
             )
             return
 
         if p_status.returncode != 0:
             err = (p_status.stderr or p_status.stdout or "git status failed").strip()
-            self._notify_throttled(
-                f"statusfail:{root}", f"Repository:\n{root}\n\nError:\n{err[:1200]}"
+            safe_notify(
+                name=f"statusfail:{root}",
+                message=f"Repository:\n{root}\n\nError:\n{err[:1200]}",
             )
             return
 
@@ -321,8 +310,9 @@ class Git(AbstractModule):
                     root, ["commit", "-m", msg], env, timeout_sec=self.git_timeout_sec
                 )
             except subprocess.TimeoutExpired:
-                self._notify_throttled(
-                    f"timeout:commit:{root}", f"git commit timed out:\n{root}"
+                safe_notify(
+                    name=f"timeout:commit:{root}",
+                    message=f"git commit timed out:\n{root}",
                 )
                 return
 
@@ -332,18 +322,17 @@ class Git(AbstractModule):
                     .strip()
                     .lower()
                 )
-                # ignore common safe message
                 if "nothing to commit" not in out:
                     err = (
                         p_commit.stderr or p_commit.stdout or "git commit failed"
                     ).strip()
-                    self._notify_throttled(
-                        f"commitfail:{root}",
-                        f"Repository:\n{root}\n\nError:\n{err[:1200]}",
+                    safe_notify(
+                        name=f"commitfail:{root}",
+                        message=f"Repository:\n{root}\n\nError:\n{err[:1200]}",
                     )
                     return
 
-        # ALWAYS push, but with backoff if it fails (prevents spam + remote resets)
+        # ALWAYS push, but with backoff if it fails
         now = time.time()
         next_allowed = self._push_next_allowed_at.get(root, 0.0)
         if now < next_allowed:
@@ -355,20 +344,19 @@ class Git(AbstractModule):
             )
         except subprocess.TimeoutExpired:
             self._push_register_fail(root)
-            self._notify_throttled(
-                f"timeout:push:{root}", f"git push timed out:\n{root}"
+            safe_notify(
+                name=f"timeout:push:{root}", message=f"git push timed out:\n{root}"
             )
             return
 
         if p_push.returncode != 0:
             self._push_register_fail(root)
             err = (p_push.stderr or p_push.stdout or "git push failed").strip()
-            self._notify_throttled(
-                f"pushfail:{root}",
-                f"Repository:\n{root}\n\nCommand:\ngit push\n\nError:\n{err[:1200]}",
+            safe_notify(
+                name=f"pushfail:{root}",
+                message=f"Repository:\n{root}\n\nCommand:\ngit push\n\nError:\n{err[:1200]}",
             )
         else:
-            # reset backoff on success
             self._push_backoff[root] = self.push_backoff_start_sec
             self._push_next_allowed_at[root] = 0.0
 
@@ -381,47 +369,49 @@ class Git(AbstractModule):
         self._push_next_allowed_at[root] = time.time() + backoff
 
     # ---------------- event handlers ----------------
+    # New AbstractModule contract: return List[str] | None
+    # This module does not write files directly -> always returns None.
 
-    def created(self, args: list[str], event) -> bool:
+    def created(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         known_raw, _ = parse_args(self.template, args)
         known = cast(KnownArgs, known_raw)
 
         path = self._to_str(event.src_path)
         if self._path_is_inside_git_dir(path):
-            return False
+            return None
 
         root = self._find_git_root(path)
         if root:
             self._enqueue(root, "created", [path], known)
-        return False
+        return None
 
-    def modified(self, args: list[str], event) -> bool:
+    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         known_raw, _ = parse_args(self.template, args)
         known = cast(KnownArgs, known_raw)
 
         path = self._to_str(event.src_path)
         if self._path_is_inside_git_dir(path):
-            return False
+            return None
 
         root = self._find_git_root(path)
         if root:
             self._enqueue(root, "modified", [path], known)
-        return False
+        return None
 
-    def deleted(self, args: list[str], event) -> bool:
+    def deleted(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         known_raw, _ = parse_args(self.template, args)
         known = cast(KnownArgs, known_raw)
 
         path = self._to_str(event.src_path)
         if self._path_is_inside_git_dir(path):
-            return False
+            return None
 
         root = self._find_git_root(path)
         if root:
             self._enqueue(root, "deleted", [path], known)
-        return False
+        return None
 
-    def moved(self, args: list[str], event) -> bool:
+    def moved(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         known_raw, _ = parse_args(self.template, args)
         known = cast(KnownArgs, known_raw)
 
@@ -429,13 +419,12 @@ class Git(AbstractModule):
         dest_raw = getattr(event, "dest_path", None)
         dest = self._to_str(dest_raw) if dest_raw is not None else ""
 
-        # ignore git internals
         if (src and self._path_is_inside_git_dir(src)) or (
             dest and self._path_is_inside_git_dir(dest)
         ):
-            return False
+            return None
 
         root = self._find_git_root(dest or src)
         if root:
             self._enqueue(root, "moved", [src, dest], known)
-        return False
+        return None

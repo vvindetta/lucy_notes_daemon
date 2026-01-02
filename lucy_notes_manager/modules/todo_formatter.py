@@ -8,34 +8,34 @@ from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 
 class TodoFormatter(AbstractModule):
-    name = "todo"
-    priority = 20
+    name: str = "todo"
+    priority: int = 20
 
     template = (("--todo", str),)
 
-    def created(self, args: List[str], event: FileSystemEvent) -> bool:
+    def created(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         if "--todo" not in args:
-            return False
+            return None
         return self._convert_to_checklist(str(event.src_path))
 
-    def modified(self, args: List[str], event: FileSystemEvent) -> bool:
+    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         if "--todo" not in args:
-            return False
+            return None
         return self._convert_to_checklist(str(event.src_path))
 
-    def _convert_to_checklist(self, path: str) -> bool:
+    def _convert_to_checklist(self, path: str) -> List[str] | None:
         if not os.path.isfile(path):
-            return False
+            return None
 
         ext = os.path.splitext(path)[1].lstrip(".").lower()
         if ext != "md":
-            return False
+            return None
 
         try:
             with open(path, "r", encoding="utf-8") as f:
                 original_text = f.read()
         except (OSError, UnicodeDecodeError):
-            return False
+            return None
 
         lines = original_text.splitlines(keepends=True)
         changed = False
@@ -71,12 +71,12 @@ class TodoFormatter(AbstractModule):
                 changed = True
 
         if not changed:
-            return False
+            return None
 
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
         except OSError:
-            return False
+            return None
 
-        return True
+        return [os.path.abspath(path)]

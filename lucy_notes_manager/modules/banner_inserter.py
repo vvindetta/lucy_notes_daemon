@@ -14,26 +14,34 @@ class BannerInserter(AbstractModule):
 
     template = (("--banner", str),)
 
-    def modified(self, args: List[str], event: FileSystemEvent) -> bool:
+    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
         """
         Insert an ASCII banner below the first line if --banner is present.
+
+        Returns:
+            List[str] | None:
+                - List of file paths to ignore next (written files)
+                - None if nothing changed
 
         Examples:
             --banner Hello
             --banner date
         """
-
         known_args, _ = parse_args(args=args, template=BannerInserter.template)
-        banner_text = known_args.get("banner")
-        if not banner_text:
-            return False
-        banner_text = banner_text[0]
+        banner_vals = known_args.get("banner")
+        if not banner_vals:
+            return None
 
+        banner_text = banner_vals[0]
         if banner_text == "date":
             banner_text = str(date.today())
 
+        src_path = getattr(event, "src_path", None)
+        if not src_path:
+            return None
+
         try:
-            with open(event.src_path, "r+", encoding="utf-8") as file:
+            with open(src_path, "r+", encoding="utf-8") as file:
                 lines = file.readlines()
 
                 # --- Build banner block ---
@@ -48,16 +56,18 @@ class BannerInserter(AbstractModule):
                 else:
                     lines = ["\n"] + banner_block
 
-                # Remove -banner from first line
-                lines[0] = clean_args_from_line(lines[0], flags=["--banner"]) + "\n"
+                # Remove --banner from first line
+                first = lines[0] if lines else ""
+                cleaned = clean_args_from_line(first, flags=["--banner"]).rstrip("\n")
+                lines[0] = cleaned + "\n"
 
                 # Rewrite file
                 file.seek(0)
                 file.truncate()
                 file.writelines(lines)
 
-                return True
+                return [src_path]
 
         except FileNotFoundError:
             # File might have been moved or deleted
-            return False
+            return None

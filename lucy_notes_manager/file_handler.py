@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from watchdog.events import FileSystemEventHandler
 
@@ -14,7 +14,7 @@ from lucy_notes_manager.modules.abstract_module import AbstractModule
 logger = logging.getLogger(__name__)
 
 
-class ChangeHandler(FileSystemEventHandler):
+class FileHandler(FileSystemEventHandler):
     def __init__(
         self,
         modules: List[Tuple[int, AbstractModule]],
@@ -25,30 +25,13 @@ class ChangeHandler(FileSystemEventHandler):
             ("--force", str),
             ("--exclude", str),
         )
+        self._ignore_paths: Dict[str, int] = {}
 
         if args:
             self.system_args, self.modules_args = parse_args(
                 args=args, template=self.template
             )
             logging.info(f"\n {args}")
-
-        self._ignore_paths: set[str] = set()
-
-    def _mark_to_ignore(self, input_path: str):
-        input_path = os.path.abspath(input_path)
-
-        self._ignore_paths.add(input_path)
-        logger.info(f"MARKED TO IGNORE: {input_path}")
-        return False
-
-    def _check_and_delete_ignore(self, input_path: str) -> bool:
-        input_path = os.path.abspath(input_path)
-
-        if input_path in self._ignore_paths:
-            self._ignore_paths.remove(input_path)
-            logger.info(f"IGNORED: {input_path}")
-            return True
-        return False
 
     def _process_file(self, event):
         if event.is_directory or os.path.basename(event.src_path).startswith("."):
@@ -85,15 +68,48 @@ class ChangeHandler(FileSystemEventHandler):
             if module.name in exclude_modules and module.name not in force_modules:
                 continue
 
-            method = getattr(module, event.event_type, None)
-            if method:
-                logging.info(f"STARTED: {module.name}")
-                result = method(args=event_modules_args, event=event)
+            run_action = getattr(module, event.event_type, None)
+            if not run_action:
+                return
 
-                if result:
-                    logger.info(f"CHANGE: {module.name} write file")
-                    self._mark_to_ignore(file_path)
-                logging.info(f"END: {module.name}")
+            logging.info(f"STARTED: {module.name}")
+
+            ignore_paths = run_action(args=event_modules_args, event=event)
+            if ignore_paths:
+                logger.info(
+                    f"MARKED TO IGNORE: Paths \n{ignore_paths}\n by {module.name}"
+                )
+                self._mark_to_ignore(ignore_paths=ignore_paths)
+
+            logging.info(f"END: {module.name}")
+
+    def _mark_to_ignore(self, ignore_paths: List[str]) -> None:
+        for path in ignore_paths:
+            abs_path = os.path.abspath(path)
+            self._ignore_paths[abs_path] = self._ignore_paths.get(abs_path, 0) + 1
+
+            logger.info(
+                "MARKED TO IGNORE: %s (count=%d)",
+                abs_path,
+                self._ignore_paths[abs_path],
+            )
+
+    def _check_and_delete_ignore(self, input_path: str) -> bool:
+        abs_path = os.path.abspath(input_path)
+
+        count = self._ignore_paths.get(abs_path, 0)
+        if count <= 0:
+            return False
+
+        if count == 1:
+            del self._ignore_paths[abs_path]
+        else:
+            self._ignore_paths[abs_path] = count - 1
+
+        logger.info(
+            "IGNORED: %s (remaining=%d)", abs_path, self._ignore_paths.get(abs_path, 0)
+        )
+        return True
 
     def on_modified(self, event):
         self._process_file(event=event)

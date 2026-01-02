@@ -3,7 +3,7 @@ import time
 
 from watchdog.observers import Observer
 
-from lucy_notes_manager.change_handler import ChangeHandler
+from lucy_notes_manager.file_handler import FileHandler
 from lucy_notes_manager.lib.args import setup_args
 from lucy_notes_manager.modules.banner_inserter import BannerInserter
 from lucy_notes_manager.modules.git import Git
@@ -60,7 +60,7 @@ observer = Observer()
 
 for path in system_args["notes_dirs"]:
     observer.schedule(
-        ChangeHandler(modules=MODULES, args=unknown_args),
+        FileHandler(modules=MODULES, args=unknown_args),
         path=path,
         recursive=True,
     )
