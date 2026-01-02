@@ -76,9 +76,6 @@ class FileHandler(FileSystemEventHandler):
 
             ignore_paths = run_action(args=event_modules_args, event=event)
             if ignore_paths:
-                logger.info(
-                    f"MARKED TO IGNORE: Paths \n{ignore_paths}\n by {module.name}"
-                )
                 self._mark_to_ignore(ignore_paths=ignore_paths)
 
             logging.info(f"END: {module.name}")

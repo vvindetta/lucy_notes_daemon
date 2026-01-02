@@ -849,7 +849,7 @@ class PlasmaSync(AbstractModule):
                         written.append(os.path.abspath(bold_path))
 
         if written:
-            logger.info("Sync MAIN Plasma -> TODO: %s -> %s", html_path, todo_file)
+            logger.info("Sync MAIN Plasma -> TODO: %s -> %s")  # html_path, todo_file)
 
         return written or None
 
