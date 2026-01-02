@@ -2,6 +2,7 @@ import argparse
 import logging
 import shlex
 import sys
+from collections.abc import Iterable
 from typing import Any, Dict, List, Tuple
 
 Template = Tuple[Tuple[str, type], ...]
@@ -155,11 +156,58 @@ def get_args_from_first_file_line(
     return known_args, unknown_args
 
 
-def clean_args_from_line(first_line: str, flags):
-    tokens = shlex.split(first_line)
+def _looks_like_flag(token: str) -> bool:
+    """
+    Heuristic: treat as a flag (флаг) if it's like:
+      --something
+      -s
+    but NOT negative numbers like -1, -2.5
+    """
+    if token.startswith("--") and len(token) > 2:
+        return True
+    if token.startswith("-") and len(token) > 1:
+        # if it's "-1" or "-2.5" -> treat as value, not a flag
+        return not (token[1].isdigit() or token[1] == ".")
+    return False
 
-    new_tokens = [
-        token for token in tokens if not any(token.startswith(flag) for flag in flags)
-    ]
 
-    return " ".join(new_tokens)
+def clean_args_from_line(first_line: str, flags: Iterable[str]) -> str:
+    """
+    Remove flags and their values from a single line.
+
+    - flags: flags to remove (e.g. ["--banner"])
+    - If removed flag is in form "--flag=value" -> removed fully.
+    - If removed flag is in form "--flag" -> removes ALL following value tokens
+      until the next flag-like token (greedy).
+    - Preserves trailing newline automatically.
+    """
+    newline = "\n" if first_line.endswith("\n") else ""
+    raw = first_line[:-1] if newline else first_line
+
+    tokens = shlex.split(raw)
+    remove = set(flags)
+
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+
+        # handle --flag=value
+        head = tok.split("=", 1)[0] if tok.startswith("-") else tok
+
+        if head in remove:
+            i += 1
+            # if "--flag=value" -> value already inside tok, nothing more to consume
+            if "=" in tok:
+                continue
+
+            # consume value tokens (one or many) until next flag-like token
+            while i < len(tokens) and not _looks_like_flag(tokens[i]):
+                i += 1
+            continue
+
+        out.append(tok)
+        i += 1
+
+    # shlex.join keeps proper quoting if needed (tokenization-safe)
+    return (shlex.join(out) if out else "") + newline

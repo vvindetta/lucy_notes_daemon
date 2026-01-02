@@ -15,18 +15,6 @@ class BannerInserter(AbstractModule):
     template = (("--banner", str),)
 
     def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        """
-        Insert an ASCII banner below the first line if --banner is present.
-
-        Returns:
-            List[str] | None:
-                - List of file paths to ignore next (written files)
-                - None if nothing changed
-
-        Examples:
-            --banner Hello
-            --banner date
-        """
         known_args, _ = parse_args(args=args, template=BannerInserter.template)
         banner_vals = known_args.get("banner")
         if not banner_vals:
@@ -43,25 +31,18 @@ class BannerInserter(AbstractModule):
         try:
             with open(src_path, "r+", encoding="utf-8") as file:
                 lines = file.readlines()
+                if not lines:
+                    lines = ["\n"]
 
-                # --- Build banner block ---
                 ascii_banner = pyfiglet.figlet_format(banner_text).rstrip() + "\n"
                 banner_block = ["---\n", "\n", ascii_banner]
 
-                # Insert banner under the first line
-                if len(lines) >= 2:
-                    lines[1:2] = banner_block
-                elif len(lines) == 1:
-                    lines.extend(banner_block)
-                else:
-                    lines = ["\n"] + banner_block
+                # Insert banner right after the first line (do not overwrite existing content)
+                lines[1:1] = banner_block
 
-                # Remove --banner from first line
-                first = lines[0] if lines else ""
-                cleaned = clean_args_from_line(first, flags=["--banner"]).rstrip("\n")
-                lines[0] = cleaned + "\n"
+                # Remove --banner (and its values) from the first line
+                lines[0] = clean_args_from_line(lines[0], flags=["--banner"])
 
-                # Rewrite file
                 file.seek(0)
                 file.truncate()
                 file.writelines(lines)
@@ -69,5 +50,4 @@ class BannerInserter(AbstractModule):
                 return [src_path]
 
         except FileNotFoundError:
-            # File might have been moved or deleted
             return None
