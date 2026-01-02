@@ -47,9 +47,11 @@ class FileHandler(FileSystemEventHandler):
             return
 
         if event.event_type == "moved":
-            logger.info(f"Moved: {event.src_path} → {event.dest_path}")
+            logger.info(f"EVENT: Moved: {event.src_path} → {event.dest_path}")
         else:
-            logger.info(f"{str(event.event_type).capitalize()}: {event.src_path}")
+            logger.info(
+                f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}"
+            )
 
         event_known_file_args, event_unknown_file_args = get_args_from_first_file_line(
             path=file_path, template=self.template
