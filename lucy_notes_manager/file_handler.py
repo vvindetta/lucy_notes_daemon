@@ -47,10 +47,10 @@ class FileHandler(FileSystemEventHandler):
             return
 
         if event.event_type == "moved":
-            logger.info(f"\nEVENT: Moved: {event.src_path} → {event.dest_path}")
+            logger.info(f"EVENT: Moved: {event.src_path} → {event.dest_path}")
         else:
             logger.info(
-                f"\nEVENT: {str(event.event_type).capitalize()}: {event.src_path}"
+                f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}"
             )
 
         event_known_file_args, event_unknown_file_args = get_args_from_first_file_line(
@@ -81,6 +81,7 @@ class FileHandler(FileSystemEventHandler):
                 self._mark_to_ignore(ignore_paths=ignore_paths)
 
             logging.info(f"END: {module.name}")
+        logging.info("\n\n")
 
     def _mark_to_ignore(self, ignore_paths: List[str]) -> None:
         for path in ignore_paths:
