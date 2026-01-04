@@ -1,15 +1,10 @@
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 from watchdog.events import FileSystemEventHandler
 
-from lucy_notes_manager.lib.args import (
-    get_args_from_first_file_line,
-    merge_args,
-    parse_args,
-)
-from lucy_notes_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.module_manager import ModuleManager
 
 logger = logging.getLogger(__name__)
 
@@ -17,21 +12,10 @@ logger = logging.getLogger(__name__)
 class FileHandler(FileSystemEventHandler):
     def __init__(
         self,
-        modules: List[Tuple[int, AbstractModule]],
-        args: Optional[List[str]] = None,
+        modules: ModuleManager,
     ):
-        self.modules = [m for _, m in sorted(modules, key=lambda x: x[0])]
-        self.template = (
-            ("--force", str),
-            ("--exclude", str),
-        )
         self._ignore_paths: Dict[str, int] = {}
-
-        if args:
-            self.system_args, self.modules_args = parse_args(
-                args=args, template=self.template
-            )
-            logging.info(f"\n {args}")
+        self.modules = modules
 
     def _process_file(self, event):
         if event.is_directory or os.path.basename(event.src_path).startswith("."):
@@ -39,8 +23,8 @@ class FileHandler(FileSystemEventHandler):
 
         file_path = event.dest_path if event.event_type == "moved" else event.src_path
 
-        abs_path = os.path.abspath(file_path)
-        if any(part == ".git" for part in abs_path.split(os.sep)):
+        file_path = os.path.abspath(file_path)
+        if any(part == ".git" for part in file_path.split(os.sep)):
             return
 
         if event.event_type == "moved":
@@ -56,37 +40,11 @@ class FileHandler(FileSystemEventHandler):
                 f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}"
             )
 
-        event_known_file_args, event_unknown_file_args = get_args_from_first_file_line(
-            path=file_path, template=self.template
-        )
+        self._mark_to_ignore(self.modules.run(path=file_path))
 
-        event_system_merged_args = merge_args(
-            args=self.system_args,
-            overwrite_args=event_known_file_args,
-        )
-        event_modules_args = self.modules_args + event_unknown_file_args
-
-        force_modules = event_system_merged_args.get("force") or []
-        exclude_modules = event_system_merged_args.get("exclude") or []
-
-        for module in self.modules:
-            if module.name in exclude_modules and module.name not in force_modules:
-                continue
-
-            run_action = getattr(module, event.event_type, None)
-            if not run_action:
-                continue
-
-            logging.info(f"STARTED: {module.name}")
-
-            ignore_paths = run_action(args=event_modules_args, event=event)
-            if ignore_paths:
-                self._mark_to_ignore(ignore_paths=ignore_paths)
-
-            logging.info(f"END: {module.name}")
         logging.info("--- END ---\n\n")
 
-    def _mark_to_ignore(self, ignore_paths: List[str]) -> None:
+    def _mark_to_ignore(self, ignore_paths: List[str] = []) -> None:
         for path in ignore_paths:
             abs_path = os.path.abspath(path)
             self._ignore_paths[abs_path] = self._ignore_paths.get(abs_path, 0) + 1
@@ -124,5 +82,4 @@ class FileHandler(FileSystemEventHandler):
         self._process_file(event=event)
 
     def on_deleted(self, event):
-        for module in self.modules:
-            module.deleted(event=event, args=self.modules_args)
+        self._process_file(event=event)

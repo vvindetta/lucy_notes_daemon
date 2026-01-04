@@ -18,6 +18,12 @@ class AbstractModule(ABC):
     name: str
 
     """
+    Execution priority.
+    Lower numbers run first. Default for all modules is 20.
+    """
+    priority: int = 20
+
+    """
     CLI-style flags this module understands.
 
     Example:

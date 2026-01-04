@@ -3,46 +3,66 @@ import logging
 import shlex
 import sys
 from collections.abc import Iterable
-from typing import Any, Dict, List, Tuple
-
-Template = Tuple[Tuple[str, type], ...]
+from typing import Any, Dict, List, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
 
+# Args = List[List[Dict[str, Any]], int]
+
+Template = List[
+    Union[
+        Tuple[str, type],
+        Tuple[str, type, Any],
+    ]
+]
+
+
 def parse_args(
-    template: Template,
     args: List[str],
+    template: Template,
 ) -> Tuple[Dict[str, Any], List[str]]:
     """
     Parse a list of CLI-style arguments using a dynamic template.
 
     template example:
-        (
-            ("-r", str),
-            ("-banner", str),
-        )
-
-    args example:
-        ["-r", "newname.md"]
+        [
+            ("--rename", str),
+            ("--banner", str, ["date"]),
+        ]
 
     Returns:
         (known_args_dict, unknown_args_list)
     """
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 
-    for flag, typ in template:
+    for item in template:
+        if len(item) == 2:
+            flag, typ = item
+            default = None  # if not provided, argparse will use None
+        else:
+            flag, typ, default = item
+
         dest = flag.lstrip("-").replace("-", "_")
-        parser.add_argument(flag, dest=dest, type=typ, nargs="+")
+
+        kwargs: Dict[str, Any] = {
+            "dest": dest,
+            "type": typ,
+            "nargs": "+",
+        }
+
+        # Only set default if user provided it in the template item
+        if len(item) == 3:
+            kwargs["default"] = default
+
+        parser.add_argument(flag, **kwargs)
 
     try:
-        # args = split_equals_tokens(args)
         namespace, unknown_args = parser.parse_known_args(args)
     except SystemExit:
-        # if parsing fails, treat everything as unknown
         return {}, args
 
-    known_args = vars(namespace)  # Namespace -> dict
+    known_args = vars(namespace)
     return known_args, unknown_args
 
 
@@ -126,52 +146,101 @@ def setup_args(
         return known_startup_args, unknown_startup_args
 
 
-def get_args_from_first_file_line(
+def get_args_from_file(
     path: str,
     template: Template,
+    only_first_line: bool = False,
 ) -> Tuple[Dict[str, Any], List[str]]:
     """
-    Read args from the first non-empty, non-comment line.
+    Flags are ONLY like: --something
 
-    Returns:
-        (known_args_dict, unknown_args_list)
+    - only_first_line=True  -> parse ONLY the first line
+    - only_first_line=False -> parse ALL lines (whole file)
+
+    Notes:
+    - To avoid parsing normal text, this parses only lines where the first
+      non-space characters start with "--".
+    - Merges repeated flags by extending lists (nargs="+").
     """
     try:
         with open(path, "r", encoding="utf-8") as file:
-            first_line = file.readline().strip()
+            lines = file.readlines()
     except FileNotFoundError:
         logger.info(f"File: {path} not found.")
         return {}, []
 
-    if not first_line or first_line.startswith("#"):
+    if not lines:
         return {}, []
 
-    tokens = shlex.split(first_line)
+    scan_lines = [lines[0]] if only_first_line else lines
 
-    known_args, unknown_args = parse_args(
-        template=template,
-        args=tokens,
-    )
+    merged_known: Dict[str, Any] = {}
+    merged_unknown: List[str] = []
 
-    return known_args, unknown_args
+    for raw_line in scan_lines:
+        line = raw_line.strip()
+
+        # skip empty / comment lines
+        if not line or line.startswith("#"):
+            continue
+
+        # args-lines start ONLY with "--"
+        if not line.lstrip().startswith("--"):
+            continue
+
+        try:
+            tokens = shlex.split(line, comments=False, posix=True)
+        except ValueError as e:
+            logger.debug(f"shlex.split failed for line in {path}: {e}")
+            continue
+
+        # inline: extract only "--flag + values until next --flag"
+        cli_tokens: List[str] = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+
+            is_flag = tok.startswith("--") and len(tok) > 2
+            if not is_flag:
+                i += 1
+                continue
+
+            cli_tokens.append(tok)
+            i += 1
+
+            while i < len(tokens):
+                nxt = tokens[i]
+                nxt_is_flag = nxt.startswith("--") and len(nxt) > 2
+                if nxt_is_flag:
+                    break
+                cli_tokens.append(nxt)
+                i += 1
+
+        if not cli_tokens:
+            continue
+
+        line_known, line_unknown = parse_args(template=template, args=cli_tokens)
+
+        # merge known (nargs="+": list values)
+        for key, value in line_known.items():
+            if value in (None, ""):
+                continue
+
+            if key not in merged_known or merged_known[key] in (None, ""):
+                merged_known[key] = value
+                continue
+
+            if isinstance(merged_known[key], list) and isinstance(value, list):
+                merged_known[key].extend(value)
+            else:
+                merged_known[key] = value
+
+        merged_unknown.extend(line_unknown)
+
+    return merged_known, merged_unknown
 
 
-def _looks_like_flag(token: str) -> bool:
-    """
-    Heuristic: treat as a flag (флаг) if it's like:
-      --something
-      -s
-    but NOT negative numbers like -1, -2.5
-    """
-    if token.startswith("--") and len(token) > 2:
-        return True
-    if token.startswith("-") and len(token) > 1:
-        # if it's "-1" or "-2.5" -> treat as value, not a flag
-        return not (token[1].isdigit() or token[1] == ".")
-    return False
-
-
-def clean_args_from_line(first_line: str, flags: Iterable[str]) -> str:
+def clean_args_from_line(line: str, flags: Iterable[str]) -> str:
     """
     Remove flags and their values from a single line.
 
@@ -180,9 +249,22 @@ def clean_args_from_line(first_line: str, flags: Iterable[str]) -> str:
     - If removed flag is in form "--flag" -> removes ALL following value tokens
       until the next flag-like token (greedy).
     - Preserves trailing newline automatically.
+
+    Heuristic for "flag-like token":
+      --something  -> flag
+      -s           -> flag
+      but NOT negative numbers like -1, -2.5
     """
-    newline = "\n" if first_line.endswith("\n") else ""
-    raw = first_line[:-1] if newline else first_line
+
+    def looks_like_flag(token: str) -> bool:
+        if token.startswith("--") and len(token) > 2:
+            return True
+        if token.startswith("-") and len(token) > 1:
+            return not (token[1].isdigit() or token[1] == ".")
+        return False
+
+    newline = "\n" if line.endswith("\n") else ""
+    raw = line[:-1] if newline else line
 
     tokens = shlex.split(raw)
     remove = set(flags)
@@ -192,22 +274,22 @@ def clean_args_from_line(first_line: str, flags: Iterable[str]) -> str:
     while i < len(tokens):
         tok = tokens[i]
 
-        # handle --flag=value
+        # handle --flag=value by checking only the head part
         head = tok.split("=", 1)[0] if tok.startswith("-") else tok
 
         if head in remove:
             i += 1
-            # if "--flag=value" -> value already inside tok, nothing more to consume
+
+            # "--flag=value" -> already contains value, nothing else to consume
             if "=" in tok:
                 continue
 
-            # consume value tokens (one or many) until next flag-like token
-            while i < len(tokens) and not _looks_like_flag(tokens[i]):
+            # consume value tokens until next flag-like token
+            while i < len(tokens) and not looks_like_flag(tokens[i]):
                 i += 1
             continue
 
         out.append(tok)
         i += 1
 
-    # shlex.join keeps proper quoting if needed (tokenization-safe)
     return (shlex.join(out) if out else "") + newline
