@@ -40,11 +40,13 @@ class FileHandler(FileSystemEventHandler):
                 f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}"
             )
 
-        self._mark_to_ignore(self.modules.run(path=file_path))
+        ignore_paths = self.modules.run(path=file_path, event=event)
+        if ignore_paths:
+            self._mark_to_ignore(ignore_paths=ignore_paths)
 
         logging.info("--- END ---\n\n")
 
-    def _mark_to_ignore(self, ignore_paths: List[str] = []) -> None:
+    def _mark_to_ignore(self, ignore_paths: List[str]) -> None:
         for path in ignore_paths:
             abs_path = os.path.abspath(path)
             self._ignore_paths[abs_path] = self._ignore_paths.get(abs_path, 0) + 1
@@ -56,6 +58,8 @@ class FileHandler(FileSystemEventHandler):
             )
 
     def _check_and_delete_ignore(self, input_path: str) -> bool:
+        input_path = os.path.abspath(input_path)
+
         count = self._ignore_paths.get(input_path, 0)
         if count <= 0:
             return False

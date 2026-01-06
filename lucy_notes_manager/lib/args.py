@@ -3,67 +3,43 @@ import logging
 import shlex
 import sys
 from collections.abc import Iterable
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-# Args = List[List[Dict[str, Any]], int]
-
-Template = List[
-    Union[
-        Tuple[str, type],
-        Tuple[str, type, Any],
+"""
+Template example:
+    [
+        ("--rename", str, None),
+        ("--banner", str, ["date"]),
     ]
-]
+"""
+Template = List[Tuple[str, type, Any]]
+
+ArgLines = Dict[str, List[int]]
 
 
-def parse_args(
-    args: List[str],
-    template: Template,
-) -> Tuple[Dict[str, Any], List[str]]:
-    """
-    Parse a list of CLI-style arguments using a dynamic template.
-
-    template example:
-        [
-            ("--rename", str),
-            ("--banner", str, ["date"]),
-        ]
-
-    Returns:
-        (known_args_dict, unknown_args_list)
-    """
+def parse_args(args: list[str], template: Template) -> tuple[dict[str, Any], list[str]]:
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 
-    for item in template:
-        if len(item) == 2:
-            flag, typ = item
-            default = None  # if not provided, argparse will use None
-        else:
-            flag, typ, default = item
-
+    for flag, typ, default in template:
         dest = flag.lstrip("-").replace("-", "_")
 
-        kwargs: Dict[str, Any] = {
-            "dest": dest,
-            "type": typ,
-            "nargs": "+",
-        }
-
-        # Only set default if user provided it in the template item
-        if len(item) == 3:
-            kwargs["default"] = default
-
-        parser.add_argument(flag, **kwargs)
+        parser.add_argument(
+            flag,
+            dest=dest,
+            type=typ,
+            nargs="+",
+            default=default,  # always present, so no checks needed
+        )
 
     try:
         namespace, unknown_args = parser.parse_known_args(args)
     except SystemExit:
         return {}, args
 
-    known_args = vars(namespace)
-    return known_args, unknown_args
+    return vars(namespace), unknown_args
 
 
 def get_config_args(path: str, template: Template) -> Tuple[Dict[str, Any], List[str]]:
@@ -82,7 +58,9 @@ def get_config_args(path: str, template: Template) -> Tuple[Dict[str, Any], List
     return parse_args(template=template, args=config_args_raw)
 
 
-def merge_args(args: Dict[str, Any], overwrite_args: Dict[str, Any]) -> Dict[str, Any]:
+def merge_known_args(
+    args: Dict[str, Any], overwrite_args: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Merge two dicts of parsed arguments.
 
@@ -100,18 +78,16 @@ def merge_args(args: Dict[str, Any], overwrite_args: Dict[str, Any]) -> Dict[str
     return merged_args
 
 
-def setup_args(
+def setup_config_and_cli_args(
     template: Template,
-    default_config_path: str,
 ) -> Tuple[Dict[str, Any], List[str]]:
     """
     High-level helper:
 
     1. Parse startup (CLI) arguments from sys.argv[1:].
-    2. Determine config path (CLI 'config_path' or default_config_path).
-    3. Try to read and parse config file.
-    4. Merge config args with CLI args (CLI wins).
-    5. Return (known_args_dict, unknown_args_list).
+    2. Try to read config file.
+    3. Merge config and CLI args (CLI wins).
+    4. Return (known_args_dict, unknown_args_list).
     """
     # 1. Parse CLI args
     known_startup_args, unknown_startup_args = parse_args(
@@ -119,99 +95,102 @@ def setup_args(
         args=sys.argv[1:],
     )
 
-    # 2. Decide config path
-    config_path = known_startup_args.get("config_path") or default_config_path
-
+    # 2. Parse config-file args
     try:
-        # 3. Parse config-file args
         known_config_args, unknown_config_args = get_config_args(
-            path=config_path,
+            path=known_startup_args["config_path"],
             template=template,
         )
-
-        # 4. Merge known; concat unknown (config first, then CLI)
-        merged_known = merge_args(
-            args=known_config_args,
-            overwrite_args=known_startup_args,
-        )
-        merged_unknown = unknown_config_args + unknown_startup_args
-
-        return merged_known, merged_unknown
-
     except FileNotFoundError:
         logging.basicConfig(level=logging.INFO)
         logging.warning(
-            f"Config file {config_path} not found, using only startup arguments",
+            f"Config file {known_startup_args['config_path']} not found, using only startup arguments",
         )
         return known_startup_args, unknown_startup_args
+
+    # 3. Merge: CLI first, than config
+    merged_known = merge_known_args(
+        args=known_config_args,
+        overwrite_args=known_startup_args,
+    )
+    merged_unknown = unknown_config_args + unknown_startup_args
+
+    return merged_known, merged_unknown
 
 
 def get_args_from_file(
     path: str,
     template: Template,
     only_first_line: bool = False,
-) -> Tuple[Dict[str, Any], List[str]]:
+) -> Tuple[Dict[str, Any], List[str], ArgLines]:
     """
-    Flags are ONLY like: --something
-
-    - only_first_line=True  -> parse ONLY the first line
-    - only_first_line=False -> parse ALL lines (whole file)
-
-    Notes:
-    - To avoid parsing normal text, this parses only lines where the first
-      non-space characters start with "--".
-    - Merges repeated flags by extending lists (nargs="+").
+    Reads args from file, accepting only lines that begin with a valid flag:
+      --<name>   (where <name> starts with a letter)
+    Rejects:
+      -- text
+      ---text
+      ---
+      text --flag
     """
+
+    def is_valid_flag_token(token: str) -> bool:
+        if not token.startswith("--"):
+            return False
+        head = token.split("=", 1)[0]  # allow --flag=value
+        if len(head) < 3 or not head[2].isalpha():  # must start with letter
+            return False
+        for ch in head[3:]:
+            if not (ch.isalnum() or ch in ("_", "-")):
+                return False
+        return True
+
     try:
         with open(path, "r", encoding="utf-8") as file:
             lines = file.readlines()
     except FileNotFoundError:
         logger.info(f"File: {path} not found.")
-        return {}, []
+        return {}, [], {}
 
     if not lines:
-        return {}, []
-
-    scan_lines = [lines[0]] if only_first_line else lines
+        return {}, [], {}
 
     merged_known: Dict[str, Any] = {}
     merged_unknown: List[str] = []
+    arg_lines: ArgLines = {"__unknown__": []}
 
-    for raw_line in scan_lines:
-        line = raw_line.strip()
+    for lineno, raw_line in enumerate(lines, start=1):
+        if only_first_line and lineno > 1:
+            break
 
-        # skip empty / comment lines
-        if not line or line.startswith("#"):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
             continue
 
-        # args-lines start ONLY with "--"
-        if not line.lstrip().startswith("--"):
+        # line must start with a valid flag token
+        start = stripped.split()[0]
+        if not is_valid_flag_token(start):
             continue
 
         try:
-            tokens = shlex.split(line, comments=False, posix=True)
+            tokens = shlex.split(stripped, comments=False, posix=True)
         except ValueError as e:
-            logger.debug(f"shlex.split failed for line in {path}: {e}")
+            logger.debug(f"shlex.split failed for line {lineno} in {path}: {e}")
             continue
 
-        # inline: extract only "--flag + values until next --flag"
+        # collect "--flag" + values until next flag
         cli_tokens: List[str] = []
         i = 0
         while i < len(tokens):
             tok = tokens[i]
-
-            is_flag = tok.startswith("--") and len(tok) > 2
-            if not is_flag:
+            if not is_valid_flag_token(tok):
                 i += 1
                 continue
 
             cli_tokens.append(tok)
             i += 1
-
             while i < len(tokens):
                 nxt = tokens[i]
-                nxt_is_flag = nxt.startswith("--") and len(nxt) > 2
-                if nxt_is_flag:
+                if is_valid_flag_token(nxt):
                     break
                 cli_tokens.append(nxt)
                 i += 1
@@ -221,10 +200,16 @@ def get_args_from_file(
 
         line_known, line_unknown = parse_args(template=template, args=cli_tokens)
 
-        # merge known (nargs="+": list values)
+        if line_unknown:
+            merged_unknown.extend(line_unknown)
+            arg_lines["__unknown__"].extend([lineno] * len(line_unknown))
+
         for key, value in line_known.items():
             if value in (None, ""):
                 continue
+
+            count = len(value) if isinstance(value, list) else 1
+            arg_lines.setdefault(key, []).extend([lineno] * count)
 
             if key not in merged_known or merged_known[key] in (None, ""):
                 merged_known[key] = value
@@ -235,12 +220,10 @@ def get_args_from_file(
             else:
                 merged_known[key] = value
 
-        merged_unknown.extend(line_unknown)
-
-    return merged_known, merged_unknown
+    return merged_known, merged_unknown, arg_lines
 
 
-def clean_args_from_line(line: str, flags: Iterable[str]) -> str:
+def delete_args_from_string(line: str, flags: Iterable[str]) -> str:
     """
     Remove flags and their values from a single line.
 

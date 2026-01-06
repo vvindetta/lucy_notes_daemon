@@ -1,7 +1,14 @@
 import logging
 from typing import Dict, List
 
-from lucy_notes_manager.lib.args import Template, get_args_from_file, parse_args
+from watchdog.events import FileSystemEvent
+
+from lucy_notes_manager.lib.args import (
+    Template,
+    get_args_from_file,
+    merge_known_args,
+    parse_args,
+)
 from lucy_notes_manager.modules.abstract_module import AbstractModule
 
 logger = logging.getLogger(__name__)
@@ -11,10 +18,10 @@ class ModuleManager:
     def __init__(self, modules: List[AbstractModule], args):
         self.modules = modules
         self.template: Template = [
-            ("--force", str),
-            ("--exclude", str),
-            ("--priority", str),
-            ("--use_only_first_line", bool),
+            ("--force", str, []),
+            ("--exclude", str, []),
+            ("--priority", str, None),
+            ("--use_only_first_line", bool, False),
         ]
 
         for module in self.modules:
@@ -25,21 +32,49 @@ class ModuleManager:
         priority_dict = self._parse_priority_list(self.config.get("priority") or [])
         self.modules.sort(key=lambda m: priority_dict.get(m.name, m.priority))
 
-    def run(self, path: str) -> List[str] | None:
-        self.event_config, _ = get_args_from_file(
-            path=path,
-            template=self.template,
-            only_first_line=self.config.get("use_only_first_line", False),
-        )
+    def run(self, path: str, event: FileSystemEvent) -> List[str] | None:
+        def _update_config():
+            known_args, _, arg_lines = get_args_from_file(
+                path=path,
+                template=self.template,
+                only_first_line=self.config["use_only_first_line"],
+            )
+            merged_known_args = merge_known_args(
+                args=self.config, overwrite_args=known_args
+            )
+            return merged_known_args, arg_lines
 
-        self.system_args, self.modules_args = parse_args(
-            args=args, template=self.template
-        )
-        logging.info(f"\n {args}")
+        config, arg_lines = _update_config()
+
+        ignore_paths = []
+
+        for module in self.modules:
+            if (
+                module.name in self.config["exclude"]
+                and module.name not in self.config["force"]
+            ):
+                continue
+
+            if event.event_type not in module.__class__.__dict__:  # not from parent
+                continue
+
+            action = getattr(module, event.event_type)
+
+            logger.info(f"STARTING: {module.name}")
+            event_ignore_paths = action(
+                path=path, event=event, config=config, arg_lines=arg_lines
+            )
+            logger.info(f"END: {module.name}")
+
+            if event_ignore_paths:
+                ignore_paths.extend(event_ignore_paths)
+                config, arg_lines = _update_config()
+
+        return ignore_paths
 
     def _parse_priority_list(self, values: List[str]) -> Dict[str, int]:
         """
-        values example: ["banner=5", "renamer=20", "todo=30"]
+        Values example: ["banner=5", "renamer=20", "todo=30"]
 
         Returns: {"banner": 5, "renamer": 20, "todo": 30}
         """
@@ -51,7 +86,7 @@ class ModuleManager:
         for item in values:
             if "=" not in item:
                 raise ValueError(
-                    f"Invalid --priority item '{item}'. Expected name=number, e.g. banner=5"
+                    "Invalid --priority arg. Example: --priority banner=5 renamer=20 todo=30"
                 )
 
             name, raw = item.split("=", 1)

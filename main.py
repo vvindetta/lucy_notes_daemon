@@ -4,38 +4,42 @@ import time
 from watchdog.observers import Observer
 
 from lucy_notes_manager.file_handler import FileHandler
-from lucy_notes_manager.lib.args import setup_args
+from lucy_notes_manager.lib.args import Template, setup_config_and_cli_args
 from lucy_notes_manager.module_manager import ModuleManager
-from lucy_notes_manager.modules.banner_inserter import BannerInserter
-from lucy_notes_manager.modules.git import Git
-from lucy_notes_manager.modules.plasma_sync import PlasmaSync
-from lucy_notes_manager.modules.renamer import Renamer
-from lucy_notes_manager.modules.todo_formatter import TodoFormatter
+from lucy_notes_manager.modules.banner import Banner
 
-TEMPLATE_STARTUP_ARGS = [
-    ("--config_path", str),
-    ("--debug", bool),
-    ("--logging_format", str),
-    ("--notes_dirs", str),
+# from lucy_notes_manager.modules.git import Git
+# from lucy_notes_manager.modules.plasma_sync import PlasmaSync
+# from lucy_notes_manager.modules.renamer import Renamer
+# from lucy_notes_manager.modules.todo_formatter import TodoFormatter
+
+TEMPLATE_STARTUP_ARGS: Template = [
+    (
+        "--config_path",
+        str,
+        "config.txt",
+    ),
+    ("--debug", bool, False),
+    (
+        "--logging_format",
+        str,
+        "%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d: %(message)s",
+    ),
+    ("--notes_dirs", str, None),
 ]
-DEFAULT_CONFIG_PATH = "config.txt"
-DEFAULT_LOGGING_FORMAT = (
-    "%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d: %(message)s"
-)
 
 
 MODULES = [
-    (BannerInserter()),
-    (Renamer()),
-    (PlasmaSync()),
-    (TodoFormatter()),
+    Banner()
+    # (Renamer()),
+    # (PlasmaSync()),
+    # (TodoFormatter()),
     # (Git()),
 ]
 
 
-config, unknown_args = setup_args(
+config, unknown_args = setup_config_and_cli_args(
     template=TEMPLATE_STARTUP_ARGS,
-    default_config_path=DEFAULT_CONFIG_PATH,
 )
 
 modules = ModuleManager(modules=MODULES, args=unknown_args)
@@ -43,8 +47,8 @@ modules = ModuleManager(modules=MODULES, args=unknown_args)
 
 # --- logging ---
 
-log_level = logging.DEBUG if bool(config.get("debug")) else logging.INFO
-log_format = config.get("logging_format") or DEFAULT_LOGGING_FORMAT
+log_level = logging.DEBUG if bool(config["debug"]) else logging.INFO
+log_format = config["logging_format"]
 logging.basicConfig(
     level=log_level,
     format=log_format,
