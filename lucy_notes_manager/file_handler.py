@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Dict, List
+from typing import Dict
 
 from watchdog.events import FileSystemEventHandler
 
@@ -46,35 +46,40 @@ class FileHandler(FileSystemEventHandler):
 
         logging.info("--- END ---\n\n")
 
-    def _mark_to_ignore(self, ignore_paths: List[str]) -> None:
-        for path in ignore_paths:
-            abs_path = os.path.abspath(path)
-            self._ignore_paths[abs_path] = self._ignore_paths.get(abs_path, 0) + 1
-
-            logger.info(
-                "MARKED TO IGNORE: %s (count=%d)",
-                abs_path,
-                self._ignore_paths[abs_path],
-            )
+    def _mark_to_ignore(self, ignore_paths: Dict[str, int]) -> None:
+        for path, count in ignore_paths.items():
+            new_count = self._bump_ignore(path, count)
+            logger.info("MARKED TO IGNORE: %s (count=%d)", self._abs(path), new_count)
 
     def _check_and_delete_ignore(self, input_path: str) -> bool:
-        input_path = os.path.abspath(input_path)
-
-        count = self._ignore_paths.get(input_path, 0)
-        if count <= 0:
+        cur = self._ignore_paths.get(self._abs(input_path), 0)
+        if cur <= 0:
             return False
 
-        if count == 1:
-            del self._ignore_paths[input_path]
-        else:
-            self._ignore_paths[input_path] = count - 1
-
-        logger.info(
-            "IGNORED: %s (remaining=%d)\n\n",
-            input_path,
-            self._ignore_paths.get(input_path, 0),
-        )
+        remaining = self._bump_ignore(input_path, -1)
+        logger.info("IGNORED: %s (remaining=%d)\n\n", self._abs(input_path), remaining)
         return True
+
+    def _bump_ignore(self, path: str, delta: int) -> int:
+        """
+        Apply +delta (can be negative) to ignore counter for path.
+        Removes key when counter reaches 0.
+        Returns new counter value (0 if removed).
+        """
+        abs_path = self._abs(path)
+        cur = self._ignore_paths.get(abs_path, 0)
+        new = cur + int(delta)
+
+        if new <= 0:
+            if abs_path in self._ignore_paths:
+                del self._ignore_paths[abs_path]
+            return 0
+
+        self._ignore_paths[abs_path] = new
+        return new
+
+    def _abs(self, p: str) -> str:
+        return os.path.abspath(p)
 
     def on_modified(self, event):
         self._process_file(event=event)

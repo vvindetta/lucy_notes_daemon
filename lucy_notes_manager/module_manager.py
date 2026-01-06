@@ -9,7 +9,7 @@ from lucy_notes_manager.lib.args import (
     merge_known_args,
     parse_args,
 )
-from lucy_notes_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.modules.abstract_module import AbstractModule, Context, System
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class ModuleManager:
         priority_dict = self._parse_priority_list(self.config.get("priority") or [])
         self.modules.sort(key=lambda m: priority_dict.get(m.name, m.priority))
 
-    def run(self, path: str, event: FileSystemEvent) -> List[str] | None:
+    def run(self, path: str, event: FileSystemEvent) -> Dict[str, int] | None:
         def _update_config():
             known_args, _, arg_lines = get_args_from_file(
                 path=path,
@@ -46,7 +46,7 @@ class ModuleManager:
 
         config, arg_lines = _update_config()
 
-        ignore_paths = []
+        ignore_paths: Dict[str, int] = {}
 
         for module in self.modules:
             if (
@@ -61,16 +61,29 @@ class ModuleManager:
             action = getattr(module, event.event_type)
 
             logger.info(f"STARTING: {module.name}")
-            event_ignore_paths = action(
-                path=path, event=event, config=config, arg_lines=arg_lines
+            event_ignore = action(
+                Context(
+                    path=path,
+                    config=config,
+                    arg_lines=arg_lines,
+                ),
+                System(
+                    event=event,
+                    global_template=self.template,
+                    modules=self.modules,
+                ),
             )
             logger.info(f"END: {module.name}")
 
-            if event_ignore_paths:
-                ignore_paths.extend(event_ignore_paths)
+            if event_ignore:
+                for path, times in event_ignore.items():
+                    if not times:
+                        continue
+                    ignore_paths[path] = ignore_paths.get(path, 0) + int(times)
+
                 config, arg_lines = _update_config()
 
-        return ignore_paths
+        return ignore_paths or None
 
     def _parse_priority_list(self, values: List[str]) -> Dict[str, int]:
         """

@@ -1,9 +1,45 @@
+from __future__ import annotations
+
 from abc import ABC
-from typing import List
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 from watchdog.events import FileSystemEvent
 
 from lucy_notes_manager.lib.args import Template
+
+IgnoreMap = Dict[str, int]
+
+
+@dataclass(frozen=True)
+class System:
+    """
+    Runtime system info.
+
+    - event: watchdog event that triggered the run
+    - global_template: full args template used by ModuleManager
+    - modules: ordered module instances in the pipeline
+    """
+
+    event: FileSystemEvent
+    global_template: Template
+    modules: List["AbstractModule"]
+
+
+@dataclass(frozen=True)
+class Context:
+    """
+    Module input for one run.
+
+    - path: absolute file path (event.src_path; for moved = event.dest_path)
+    - config: resolved args for this file (global + file flags; includes defaults)
+    - arg_lines: arg -> 1-based line numbers where it appeared in the file
+    - system: runtime info (see class System)
+    """
+
+    path: str
+    config: dict
+    arg_lines: dict
 
 
 class AbstractModule(ABC):
@@ -11,60 +47,41 @@ class AbstractModule(ABC):
     Base interface for all processing modules.
 
     Every module optionally handles events: created, modified, moved, deleted.
-    """
 
-    """Unique module identifier (e.g. 'banner')."""
-    name: str
+    Return value
+    - None:
+        No filesystem changes were made.
 
-    """
-    Execution priority.
-    Lower numbers run first. Default for all modules is 20.
-    """
-    priority: int = 20
+    - {'path1': 1, 'path2', 3, ...}:
+        Filesystem paths WAS changed N times by this module.
+        The daemon will ignore the next events for these paths to prevent loops.
 
-    """
-    CLI-style flags this module understands.
+    Prioriry
+    - 'priority': lower runs earlier.
 
-    Template example:
+    Template:
+    - 'template': flags this module adds to the global argument template.
+        Can be set up as default.
+
+    - example:
         [
-            ("--rename", str, None),
-            ("--banner", str, ["date"]),
+            ("--command", str, None),
+            ("--some-command", int, ["date"]),
         ]
     """
+
+    name: str
+    priority: int = 15
     template: Template = []
 
-    def created(
-        self, *, path: str, event: FileSystemEvent, config: dict, arg_lines: dict
-    ) -> List[str] | None:
-        """
-        Called when a file is created.
-        May return List of file paths to ignore. Did func change something in file?
-        """
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def modified(
-        self, *, path: str, event: FileSystemEvent, config: dict, arg_lines: dict
-    ) -> list[str] | None:
-        """
-        Called when a file is modified.
-        May return List of file paths to ignore. Did func change something in file?
-        """
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def moved(
-        self, *, path: str, event: FileSystemEvent, config: dict, arg_lines: dict
-    ) -> List[str] | None:
-        """
-        Called when a file is moved.
-        May return List of file paths to ignore. Did func change something in file?
-        """
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def deleted(
-        self, *, path: str, event: FileSystemEvent, config: dict, arg_lines: dict
-    ) -> List[str] | None:
-        """
-        Called when a file is deleted.
-        May return List of file paths to ignore. Did func change something in file?
-        """
+    def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None

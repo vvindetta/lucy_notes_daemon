@@ -1,29 +1,30 @@
 import os
 import re
-from typing import List
+from typing import List, Optional
 
-from watchdog.events import FileSystemEvent
-
-from lucy_notes_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.modules.abstract_module import (
+    AbstractModule,
+    Context,
+    IgnoreMap,
+    System,
+)
 
 
 class TodoFormatter(AbstractModule):
     name: str = "todo"
-    priority: int = 20
+    priority: int = 10
 
-    template = (("--todo", str),)
+    template = [
+        ("--todo", str, None),
+    ]
 
-    def created(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        if "--todo" not in args:
+    def _apply(
+        self, *, path: str, config: dict, arg_lines: dict
+    ) -> Optional[IgnoreMap]:
+        todo_vals = config["todo"]
+        if not todo_vals:
             return None
-        return self._convert_to_checklist(str(event.src_path))
 
-    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        if "--todo" not in args:
-            return None
-        return self._convert_to_checklist(str(event.src_path))
-
-    def _convert_to_checklist(self, path: str) -> List[str] | None:
         if not os.path.isfile(path):
             return None
 
@@ -40,14 +41,11 @@ class TodoFormatter(AbstractModule):
         lines = original_text.splitlines(keepends=True)
         changed = False
 
-        # Match lines starting with "- " (or indented), but not already checklist:
-        # "- [ ] ..." or "- [x] ...".
         pattern = re.compile(r"^(\s*)-\s+(?!\[[ xX]\])(.+)$")
 
         new_lines: List[str] = []
 
         for original_line in lines:
-            # Preserve newline style
             if original_line.endswith("\r\n"):
                 newline = "\r\n"
                 line = original_line[:-2]
@@ -66,7 +64,6 @@ class TodoFormatter(AbstractModule):
             indent, content = match.groups()
             new_line = f"{indent}- [ ] {content}{newline}"
             new_lines.append(new_line)
-
             if new_line != original_line:
                 changed = True
 
@@ -79,4 +76,13 @@ class TodoFormatter(AbstractModule):
         except OSError:
             return None
 
-        return [os.path.abspath(path)]
+        return {os.path.abspath(path): 1}
+
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)
+
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)
+
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)

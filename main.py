@@ -1,17 +1,20 @@
 import logging
 import time
+from typing import List
 
 from watchdog.observers import Observer
 
 from lucy_notes_manager.file_handler import FileHandler
 from lucy_notes_manager.lib.args import Template, setup_config_and_cli_args
 from lucy_notes_manager.module_manager import ModuleManager
+from lucy_notes_manager.modules.abstract_module import AbstractModule
 from lucy_notes_manager.modules.banner import Banner
 
 # from lucy_notes_manager.modules.git import Git
 # from lucy_notes_manager.modules.plasma_sync import PlasmaSync
-# from lucy_notes_manager.modules.renamer import Renamer
-# from lucy_notes_manager.modules.todo_formatter import TodoFormatter
+from lucy_notes_manager.modules.renamer import Renamer
+from lucy_notes_manager.modules.sys_info import SysInfo
+from lucy_notes_manager.modules.todo_formatter import TodoFormatter
 
 TEMPLATE_STARTUP_ARGS: Template = [
     (
@@ -29,11 +32,12 @@ TEMPLATE_STARTUP_ARGS: Template = [
 ]
 
 
-MODULES = [
-    Banner()
-    # (Renamer()),
+MODULES: List[AbstractModule] = [
+    Banner(),
+    Renamer(),
+    TodoFormatter(),
+    SysInfo(),
     # (PlasmaSync()),
-    # (TodoFormatter()),
     # (Git()),
 ]
 

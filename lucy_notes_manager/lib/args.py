@@ -26,13 +26,21 @@ def parse_args(args: list[str], template: Template) -> tuple[dict[str, Any], lis
     for flag, typ, default in template:
         dest = flag.lstrip("-").replace("-", "_")
 
-        parser.add_argument(
-            flag,
-            dest=dest,
-            type=typ,
-            nargs="+",
-            default=default,  # always present, so no checks needed
-        )
+        if typ is bool:
+            parser.add_argument(
+                flag,
+                dest=dest,
+                action="store_true",  # --flag -> True
+                default=default,  # missing -> default (usually False)
+            )
+        else:
+            parser.add_argument(
+                flag,
+                dest=dest,
+                type=typ,
+                nargs="+",
+                default=default,
+            )
 
     try:
         namespace, unknown_args = parser.parse_known_args(args)

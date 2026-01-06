@@ -1,25 +1,31 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List
+from typing import Optional
 
 import pyfiglet
-from watchdog.events import FileSystemEvent
 
 from lucy_notes_manager.lib.args import delete_args_from_string
-from lucy_notes_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.modules.abstract_module import (
+    AbstractModule,
+    Context,
+    IgnoreMap,
+    System,
+)
 
 
-class BannerInserter(AbstractModule):
+class Banner(AbstractModule):
     name: str = "banner"
-    priority: int = 5
+    priority: int = 10
 
     template = [
         ("--banner", str, None),
         ("--separator", str, ["---"]),
     ]
 
-    def _apply(self, *, path: str, config: dict, arg_lines: dict) -> List[str] | None:
+    def _apply(
+        self, *, path: str, config: dict, arg_lines: dict
+    ) -> Optional[IgnoreMap]:
         banner_vals = config["banner"]
         if not banner_vals:
             return None
@@ -40,7 +46,21 @@ class BannerInserter(AbstractModule):
 
             idx = max(0, min(len(lines) - 1, lineno_1based - 1))
 
-            ascii_banner = pyfiglet.figlet_format(banner_text).rstrip("\n") + "\n"
+            ascii_lines = pyfiglet.figlet_format(banner_text).splitlines(
+                True
+            )  # keep '\n'
+
+            while ascii_lines and ascii_lines[0].strip() == "":
+                ascii_lines.pop(0)
+
+            while ascii_lines and ascii_lines[-1].strip() == "":
+                ascii_lines.pop()
+
+            if ascii_lines and not ascii_lines[-1].endswith("\n"):
+                ascii_lines[-1] += "\n"
+
+            if not ascii_lines:
+                return None
 
             if idx == 0:
                 lines[0] = delete_args_from_string(lines[0], ["--banner"])
@@ -52,35 +72,26 @@ class BannerInserter(AbstractModule):
                     lines[0] = "\n"
                     insert_pos = 1
 
-                # separator only BEFORE, not after
-                lines[insert_pos:insert_pos] = [sep_line, ascii_banner]
-
+                lines[insert_pos:insert_pos] = [sep_line] + ascii_lines
             else:
                 cleaned = delete_args_from_string(lines[idx], ["--banner"])
 
-                # no separators in middle, banner starts on same line number
-                lines[idx : idx + 1] = [ascii_banner]
+                lines[idx : idx + 1] = ascii_lines
 
                 if cleaned.strip():
-                    lines[idx + 1 : idx + 1] = [cleaned]
+                    lines[idx + len(ascii_lines) : idx + len(ascii_lines)] = [cleaned]
 
             f.seek(0)
             f.truncate()
             f.writelines(lines)
 
-        return [path]
+        return {path: 1}
 
-    def created(
-        self, *, path: str, event: FileSystemEvent, config: dict, arg_lines: dict
-    ):
-        return self._apply(path=path, config=config, arg_lines=arg_lines)
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)
 
-    def modified(
-        self, *, path: str, event: FileSystemEvent, config: dict, arg_lines: dict
-    ):
-        return self._apply(path=path, config=config, arg_lines=arg_lines)
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)
 
-    def moved(
-        self, *, path: str, event: FileSystemEvent, config: dict, arg_lines: dict
-    ):
-        return self._apply(path=path, config=config, arg_lines=arg_lines)
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)
