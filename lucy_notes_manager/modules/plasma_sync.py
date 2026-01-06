@@ -3,53 +3,26 @@ import html
 import logging
 import os
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Tuple, cast
-
-from watchdog.events import FileSystemEvent
+from typing import Dict, List, Optional, Tuple
 
 from lucy_notes_manager.lib import safe_notify
-from lucy_notes_manager.lib.args import parse_args
-from lucy_notes_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.lib.args import Template
+from lucy_notes_manager.modules.abstract_module import AbstractModule, Context, System
 
 logger = logging.getLogger(__name__)
 
-# ---------------- Defaults (can be overridden by args) ---------------- #
+IgnoreMap = Dict[str, int]
 
-DEFAULT_PLASMA_NOTES_DIR = "/home/user/.local/share/plasma_notes"
-DEFAULT_TODO_FILE = "/home/user/notes/todo.md"
-DEFAULT_PLASMA_NOTE_ID = "bfe86b19-c35c-489b-bed7-3d561471f8"
-
-# Optional bold-only mirror note (your "third widget", but bold-only)
-DEFAULT_PLASMA_BOLD_NOTE_ID: Optional[str] = None
-
-
-# ---------------- Local ignore + state ---------------- #
-
-_IGNORE_NEXT_EVENT: Dict[str, int] = {}
+# ---------------- State ---------------- #
 
 _CURRENT_TEXT: Optional[str] = None
 _CURRENT_HASH: Optional[str] = None
 
-# Bold-specific state (so MAIN->BOLD updates happen even if plain text didn't change)
 _MAIN_BOLD_HASH: Optional[str] = None
 _BOLD_NOTE_ITEMS_HASH: Optional[str] = None
 
 
-def _mark_ignore(path: str) -> None:
-    path = os.path.abspath(path)
-    _IGNORE_NEXT_EVENT[path] = _IGNORE_NEXT_EVENT.get(path, 0) + 1
-
-
-def _should_ignore(path: str) -> bool:
-    path = os.path.abspath(path)
-    count = _IGNORE_NEXT_EVENT.get(path, 0)
-    if not count:
-        return False
-    if count == 1:
-        _IGNORE_NEXT_EVENT.pop(path, None)
-    else:
-        _IGNORE_NEXT_EVENT[path] = count - 1
-    return True
+# ---------------- IO ---------------- #
 
 
 def _read_file(path: str) -> str:
@@ -70,10 +43,6 @@ def _read_file(path: str) -> str:
 
 
 def _write_if_changed(path: str, content: str) -> bool:
-    """
-    Write to path only if content changed.
-    Returns True if the file was actually written, False otherwise.
-    """
     path = os.path.abspath(path)
     old = _read_file(path)
     if old == content:
@@ -81,7 +50,6 @@ def _write_if_changed(path: str, content: str) -> bool:
 
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        _mark_ignore(path)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         return True
@@ -93,6 +61,14 @@ def _write_if_changed(path: str, content: str) -> bool:
         logger.error("OS error writing %s: %s", path, e)
         safe_notify("write_os:" + path, f"Failed to write file:\n{path}\n\n{e}")
         return False
+
+
+def _inc_ignore(ignore: IgnoreMap, path: str, times: int = 1) -> None:
+    ap = os.path.abspath(path)
+    ignore[ap] = ignore.get(ap, 0) + int(times)
+
+
+# ---------------- Text helpers ---------------- #
 
 
 def _hash_text(text: str) -> str:
@@ -132,15 +108,12 @@ def _normalize_text(text: str) -> str:
         next_stripped = next_line.lstrip()
 
         keep_blank_count = 1
-
         if prev.endswith(":") and next_stripped.startswith("- "):
             keep_blank_count = 0
         elif prev.lstrip().startswith("- ") and next_stripped.startswith("- "):
             keep_blank_count = 0
 
-        for _ in range(keep_blank_count):
-            result.append("")
-
+        result.extend([""] * keep_blank_count)
         i = j
 
     while result and result[-1].strip() == "":
@@ -149,7 +122,21 @@ def _normalize_text(text: str) -> str:
     return "\n".join(result)
 
 
-# ---------------- Plain text <-> Plasma HTML (UNCHANGED) ---------------- #
+def _update_state_from_text(text: str) -> bool:
+    global _CURRENT_TEXT, _CURRENT_HASH
+
+    norm = _normalize_text(text)
+    new_hash = _hash_text(norm)
+
+    if _CURRENT_HASH == new_hash:
+        return False
+
+    _CURRENT_TEXT = norm
+    _CURRENT_HASH = new_hash
+    return True
+
+
+# ---------------- Plain text <-> Plasma HTML ---------------- #
 
 
 class _PlasmaHTMLParser(HTMLParser):
@@ -214,8 +201,7 @@ class _PlasmaHTMLParser(HTMLParser):
 def _html_to_text(html_src: str) -> str:
     parser = _PlasmaHTMLParser()
     parser.feed(html_src)
-    raw_text = parser.get_text()
-    return _normalize_text(raw_text)
+    return _normalize_text(parser.get_text())
 
 
 def _text_to_plasma_html(text: str) -> str:
@@ -251,25 +237,10 @@ def _text_to_plasma_html(text: str) -> str:
                 f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n'
             )
 
-    footer = "</body></html>\n"
-    return header + "".join(parts) + footer
+    return header + "".join(parts) + "</body></html>\n"
 
 
-def _update_state_from_text(text: str) -> bool:
-    global _CURRENT_TEXT, _CURRENT_HASH
-
-    norm = _normalize_text(text)
-    new_hash = _hash_text(norm)
-
-    if _CURRENT_HASH == new_hash:
-        return False
-
-    _CURRENT_TEXT = norm
-    _CURRENT_HASH = new_hash
-    return True
-
-
-# ---------------- Bold-only overlay (ADDED, optional) ---------------- #
+# ---------------- Bold-only overlay ---------------- #
 
 
 def _style_is_bold(style: str) -> bool:
@@ -281,32 +252,19 @@ def _style_is_bold(style: str) -> bool:
             idx = s.rfind("font-weight:")
             val = s[idx + len("font-weight:") :]
             val = val.split(";")[0]
-            num = int(val)
-            return num >= 600
+            return int(val) >= 600
         except Exception:
             return False
     return False
 
 
 class _PlasmaBoldAwareParser(HTMLParser):
-    """
-    Extract text while tracking bold spans.
-    Bold is considered if:
-    - <b>, <strong>
-    - <span style="...font-weight:600/700/bold...">
-    - <p>/<li>/<font> style has font-weight (Qt often puts bold on block tags)
-    """
-
     def __init__(self) -> None:
         super().__init__()
         self._in_body = False
         self._bold_depth = 0
-
         self._span_bold_stack: List[bool] = []
-
-        # bold may be applied to block tags (<p>, <li>) or <font>
         self._tag_style_bold: Dict[str, List[bool]] = {"p": [], "li": [], "font": []}
-
         self._lines: List[List[Tuple[str, bool]]] = [[]]
 
     def _newline(self) -> None:
@@ -315,8 +273,7 @@ class _PlasmaBoldAwareParser(HTMLParser):
     def _append(self, text: str) -> None:
         if not text:
             return
-        b = self._bold_depth > 0
-        self._lines[-1].append((text, b))
+        self._lines[-1].append((text, self._bold_depth > 0))
 
     def _push_tag_style_bold(self, tag: str, attrs) -> None:
         style = ""
@@ -396,16 +353,9 @@ class _PlasmaBoldAwareParser(HTMLParser):
                 self._newline()
             return
 
-        if tag in ("p", "li"):
-            self._newline()
-            return
-
     def handle_data(self, data):
-        if not self._in_body:
-            return
-        if not isinstance(data, str):
-            return
-        self._append(data)
+        if self._in_body and isinstance(data, str):
+            self._append(data)
 
     def get_lines(self) -> List[List[Tuple[str, bool]]]:
         merged_lines: List[List[Tuple[str, bool]]] = []
@@ -420,23 +370,23 @@ class _PlasmaBoldAwareParser(HTMLParser):
                     merged.append((t, b))
             merged_lines.append(merged)
 
-        def line_text(ln: List[Tuple[str, bool]]) -> str:
-            return "".join(t for t, _b in ln)
+        def txt(ln: List[Tuple[str, bool]]) -> str:
+            return "".join(t for t, _ in ln)
 
         i = 0
-        while i < len(merged_lines) and line_text(merged_lines[i]).strip() == "":
+        while i < len(merged_lines) and txt(merged_lines[i]).strip() == "":
             i += 1
         merged_lines = merged_lines[i:]
 
         j = len(merged_lines) - 1
-        while j >= 0 and line_text(merged_lines[j]).strip() == "":
+        while j >= 0 and txt(merged_lines[j]).strip() == "":
             j -= 1
         merged_lines = merged_lines[: j + 1]
 
         out: List[List[Tuple[str, bool]]] = []
         prev_blank = False
         for ln in merged_lines:
-            blank = line_text(ln).strip() == ""
+            blank = txt(ln).strip() == ""
             if blank and prev_blank:
                 continue
             out.append(ln)
@@ -476,9 +426,9 @@ def _extract_bold_items_from_html(html_src: str) -> List[str]:
 
 
 def _items_hash(items: List[str]) -> str:
-    norm_items = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in items]
-    norm_items = [it for it in norm_items if it]
-    return _hash_text("\n".join(norm_items))
+    norm = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in items]
+    norm = [it for it in norm if it]
+    return _hash_text("\n".join(norm))
 
 
 def _bold_items_to_plasma_html(items: List[str]) -> str:
@@ -502,11 +452,8 @@ def _bold_items_to_plasma_html(items: List[str]) -> str:
         "margin-right:0px; -qt-block-indent:0; text-indent:0px;"
     )
 
-    norm: List[str] = []
-    for it in items:
-        it2 = it.replace("\r\n", "\n").replace("\r", "\n").strip()
-        if it2:
-            norm.append(it2)
+    norm = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in items]
+    norm = [it for it in norm if it]
 
     parts: List[str] = []
     for line in norm:
@@ -515,8 +462,7 @@ def _bold_items_to_plasma_html(items: List[str]) -> str:
             f'<p style="{base_style}"><span style=" font-weight:600;">{safe}</span></p>\n'
         )
 
-    footer = "</body></html>\n"
-    return header + "".join(parts) + footer
+    return header + "".join(parts) + "</body></html>\n"
 
 
 def _plasma_html_to_boldaware_lines(html_src: str) -> List[List[Tuple[str, bool]]]:
@@ -582,12 +528,12 @@ def _boldaware_lines_to_plasma_html(lines: List[List[Tuple[str, bool]]]) -> str:
         "margin-right:0px; -qt-block-indent:0; text-indent:0px;"
     )
 
-    def line_plain_text(ln: List[Tuple[str, bool]]) -> str:
-        return "".join(t for t, _b in ln)
+    def plain(ln: List[Tuple[str, bool]]) -> str:
+        return "".join(t for t, _ in ln)
 
     parts: List[str] = []
     for ln in lines:
-        if line_plain_text(ln).strip() == "":
+        if plain(ln).strip() == "":
             parts.append(
                 f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n'
             )
@@ -596,15 +542,13 @@ def _boldaware_lines_to_plasma_html(lines: List[List[Tuple[str, bool]]]) -> str:
         inner: List[str] = []
         for t, b in ln:
             safe = html.escape(t, quote=False)
-            if b:
-                inner.append(f'<span style=" font-weight:600;">{safe}</span>')
-            else:
-                inner.append(safe)
+            inner.append(
+                f'<span style=" font-weight:600;">{safe}</span>' if b else safe
+            )
 
         parts.append(f'<p style="{base_style}">{"".join(inner)}</p>\n')
 
-    footer = "</body></html>\n"
-    return header + "".join(parts) + footer
+    return header + "".join(parts) + "</body></html>\n"
 
 
 # ---------------- Module ---------------- #
@@ -614,91 +558,48 @@ class PlasmaSync(AbstractModule):
     name: str = "plasma_notes_sync"
     priority: int = 30
 
-    template = (
-        ("--plasma-notes-dir", str),
-        ("--plasma-note-id", str),
-        ("--todo-file", str),
-        ("--plasma-bold-note-id", str),
-    )
+    # NO DEFAULTS. All must come from config/args.
+    template: Template = [
+        ("--plasma-notes-dir", str, None),  # REQUIRED
+        ("--plasma-note-id", str, None),  # REQUIRED
+        ("--todo-file", str, None),  # REQUIRED
+        ("--plasma-bold-note-id", str, None),  # optional
+    ]
 
-    def _cfg(self, args: List[str]) -> Tuple[str, str, str, Optional[str]]:
-        known_raw, _ = parse_args(self.template, args)
-        known = cast(Dict[str, List[object]], known_raw)
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._handle(ctx)
 
-        plasma_dir = DEFAULT_PLASMA_NOTES_DIR
-        todo_file = DEFAULT_TODO_FILE
-        note_id = DEFAULT_PLASMA_NOTE_ID
-        bold_note_id: Optional[str] = DEFAULT_PLASMA_BOLD_NOTE_ID
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._handle(ctx)
 
-        v = known.get("plasma_notes_dir")
-        if v and isinstance(v[0], str) and v[0]:
-            plasma_dir = v[0]
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._handle(ctx)
 
-        v = known.get("todo_file")
-        if v and isinstance(v[0], str) and v[0]:
-            todo_file = v[0]
+    def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return None
 
-        v = known.get("plasma_note_id")
-        if v and isinstance(v[0], str) and v[0]:
-            note_id = v[0]
+    def _cfg(self, ctx: Context) -> tuple[str, str, str, Optional[str]]:
+        cfg = ctx.config  # trust parse_args shape
 
-        v = known.get("plasma_bold_note_id")
-        if v and isinstance(v[0], str) and v[0].strip():
-            bold_note_id = v[0].strip()
+        if cfg["plasma_notes_dir"] is None:
+            raise ValueError("PlasmaSync: missing required --plasma-notes-dir")
+        if cfg["todo_file"] is None:
+            raise ValueError("PlasmaSync: missing required --todo-file")
+        if cfg["plasma_note_id"] is None:
+            raise ValueError("PlasmaSync: missing required --plasma-note-id")
 
-        return (
-            os.path.abspath(os.path.expanduser(plasma_dir)),
-            os.path.abspath(os.path.expanduser(todo_file)),
-            note_id,
-            bold_note_id,
+        plasma_dir = os.path.abspath(os.path.expanduser(cfg["plasma_notes_dir"][0]))
+        todo_file = os.path.abspath(os.path.expanduser(cfg["todo_file"][0]))
+        note_id = cfg["plasma_note_id"][0]
+        bold_note_id = (
+            cfg["plasma_bold_note_id"][0]
+            if cfg["plasma_bold_note_id"] is not None
+            else None
         )
 
-    def created(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        return self._handle_event(args, event)
-
-    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        return self._handle_event(args, event)
-
-    def moved(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        path = getattr(event, "dest_path", None) or getattr(event, "src_path", None)
-        return self._handle_event(args, event, override_path=path)
-
-    def deleted(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        return None
-
-    def _find_primary_note(self, plasma_dir: str, note_id: str) -> Optional[str]:
-        try:
-            entries = sorted(os.listdir(plasma_dir))
-        except FileNotFoundError:
-            return None
-        except PermissionError as e:
-            logger.error("Permission error listing %s: %s", plasma_dir, e)
-            safe_notify(
-                "ls_perm:" + plasma_dir, f"Permission denied:\n{plasma_dir}\n\n{e}"
-            )
-            return None
-        except OSError as e:
-            logger.error("OS error listing %s: %s", plasma_dir, e)
-            safe_notify(
-                "ls_os:" + plasma_dir, f"Failed to read directory:\n{plasma_dir}\n\n{e}"
-            )
-            return None
-
-        if note_id in entries:
-            return os.path.join(plasma_dir, note_id)
-
-        for name in entries:
-            if name.startswith("."):
-                continue
-            return os.path.join(plasma_dir, name)
-
-        return None
+        return plasma_dir, todo_file, note_id, bold_note_id
 
     def _ensure_primary_note(self, plasma_dir: str, note_id: str) -> str:
-        path = self._find_primary_note(plasma_dir, note_id)
-        if path is not None:
-            return path
-
         try:
             os.makedirs(plasma_dir, exist_ok=True)
         except Exception as e:
@@ -707,7 +608,6 @@ class PlasmaSync(AbstractModule):
                 "mk_plasma:" + plasma_dir,
                 f"Failed to create directory:\n{plasma_dir}\n\n{e}",
             )
-
         return os.path.join(plasma_dir, note_id)
 
     def _bold_note_path(
@@ -725,25 +625,13 @@ class PlasmaSync(AbstractModule):
             )
         return os.path.join(plasma_dir, bold_note_id)
 
-    def _handle_event(
-        self,
-        args: List[str],
-        event: FileSystemEvent,
-        override_path: Optional[str] = None,
-    ) -> List[str] | None:
-        plasma_dir, todo_file, note_id, bold_note_id = self._cfg(args)
+    def _handle(self, ctx: Context) -> Optional[IgnoreMap]:
+        plasma_dir, todo_file, note_id, bold_note_id = self._cfg(ctx)
 
-        path = override_path or getattr(event, "src_path", None)
-        if not path:
-            return None
-        path = os.path.abspath(path)
-
-        if _should_ignore(path):
-            return None
-
+        path = os.path.abspath(ctx.path)
         todo_abs = os.path.abspath(todo_file)
-        main_path = os.path.abspath(self._ensure_primary_note(plasma_dir, note_id))
 
+        main_path = os.path.abspath(self._ensure_primary_note(plasma_dir, note_id))
         bp = self._bold_note_path(plasma_dir, bold_note_id)
         bold_path = os.path.abspath(bp) if bp is not None else None
 
@@ -774,7 +662,7 @@ class PlasmaSync(AbstractModule):
         todo_file: str,
         note_id: str,
         bold_note_id: Optional[str],
-    ) -> List[str] | None:
+    ) -> Optional[IgnoreMap]:
         text_raw = _read_file(todo_file)
         if text_raw == "" and not os.path.exists(todo_file):
             safe_notify(
@@ -784,27 +672,29 @@ class PlasmaSync(AbstractModule):
 
         if not _update_state_from_text(text_raw):
             return None
-
         if _CURRENT_TEXT is None:
             return None
+
+        ignore: IgnoreMap = {}
 
         main_path = self._ensure_primary_note(plasma_dir, note_id)
         html_new = _text_to_plasma_html(_CURRENT_TEXT)
 
-        written: List[str] = []
         if _write_if_changed(main_path, html_new):
-            written.append(os.path.abspath(main_path))
+            _inc_ignore(ignore, main_path, 1)
 
         bold_path = self._bold_note_path(plasma_dir, bold_note_id)
         if bold_path:
             global _MAIN_BOLD_HASH
             _MAIN_BOLD_HASH = _items_hash([])
             if _write_if_changed(bold_path, _bold_items_to_plasma_html([])):
-                written.append(os.path.abspath(bold_path))
+                _inc_ignore(ignore, bold_path, 1)
 
-        if written:
-            logger.info("Sync TODO -> Plasma: %s -> %s", todo_file, main_path)
-        return written or None
+        if ignore:
+            logger.info(
+                "Sync TODO -> Plasma: %s -> %s", todo_file, os.path.abspath(main_path)
+            )
+        return ignore or None
 
     def _from_main_plasma(
         self,
@@ -813,7 +703,7 @@ class PlasmaSync(AbstractModule):
         note_id: str,
         bold_note_id: Optional[str],
         html_path: str,
-    ) -> List[str] | None:
+    ) -> Optional[IgnoreMap]:
         if not os.path.exists(html_path):
             logger.debug("Plasma html not found (ignored): %s", html_path)
             return None
@@ -823,16 +713,16 @@ class PlasmaSync(AbstractModule):
 
         text_changed = _update_state_from_text(text_from_html)
 
-        written: List[str] = []
+        ignore: IgnoreMap = {}
 
         if text_changed and _CURRENT_TEXT is not None:
             if _write_if_changed(todo_file, _CURRENT_TEXT):
-                written.append(os.path.abspath(todo_file))
+                _inc_ignore(ignore, todo_file, 1)
 
             if not bold_note_id:
                 html_new = _text_to_plasma_html(_CURRENT_TEXT)
                 if _write_if_changed(html_path, html_new):
-                    written.append(os.path.abspath(html_path))
+                    _inc_ignore(ignore, html_path, 1)
 
         if bold_note_id:
             bold_items = _extract_bold_items_from_html(html_raw)
@@ -842,16 +732,14 @@ class PlasmaSync(AbstractModule):
             if _MAIN_BOLD_HASH != new_bold_hash:
                 _MAIN_BOLD_HASH = new_bold_hash
                 bold_path = self._bold_note_path(plasma_dir, bold_note_id)
-                if bold_path:
-                    if _write_if_changed(
-                        bold_path, _bold_items_to_plasma_html(bold_items)
-                    ):
-                        written.append(os.path.abspath(bold_path))
+                if bold_path and _write_if_changed(
+                    bold_path, _bold_items_to_plasma_html(bold_items)
+                ):
+                    _inc_ignore(ignore, bold_path, 1)
 
-        if written:
-            logger.info("Sync MAIN Plasma -> TODO: %s -> %s")  # html_path, todo_file)
-
-        return written or None
+        if ignore:
+            logger.info("Sync MAIN Plasma -> TODO")
+        return ignore or None
 
     def _from_bold_mirror(
         self,
@@ -859,7 +747,7 @@ class PlasmaSync(AbstractModule):
         todo_file: str,
         note_id: str,
         bold_note_id: Optional[str],
-    ) -> List[str] | None:
+    ) -> Optional[IgnoreMap]:
         if not bold_note_id:
             return None
 
@@ -886,30 +774,25 @@ class PlasmaSync(AbstractModule):
         new_lines = _replace_bold_items_in_lines(main_lines, items)
         new_main_html = _boldaware_lines_to_plasma_html(new_lines)
 
-        written: List[str] = []
+        ignore: IgnoreMap = {}
 
         if _write_if_changed(main_path, new_main_html):
-            written.append(os.path.abspath(main_path))
+            _inc_ignore(ignore, main_path, 1)
 
         new_plain = _html_to_text(new_main_html)
         if _update_state_from_text(new_plain) and _CURRENT_TEXT is not None:
             if _write_if_changed(todo_file, _CURRENT_TEXT):
-                written.append(os.path.abspath(todo_file))
+                _inc_ignore(ignore, todo_file, 1)
 
         if _write_if_changed(bold_path, _bold_items_to_plasma_html(items)):
-            written.append(os.path.abspath(bold_path))
+            _inc_ignore(ignore, bold_path, 1)
 
         _MAIN_BOLD_HASH = _items_hash(items)
 
-        if written:
-            logger.info(
-                "Sync BOLD mirror -> MAIN (+TODO): %s -> %s -> %s",
-                bold_path,
-                main_path,
-                todo_file,
-            )
+        if ignore:
+            logger.info("Sync BOLD mirror -> MAIN -> TODO")
 
-        return written or None
+        return ignore or None
 
     def _from_other_plasma(
         self,
@@ -917,7 +800,7 @@ class PlasmaSync(AbstractModule):
         todo_file: str,
         note_id: str,
         html_path: str,
-    ) -> List[str] | None:
+    ) -> Optional[IgnoreMap]:
         if not os.path.exists(html_path):
             logger.debug("Plasma html not found (ignored): %s", html_path)
             return None
@@ -927,20 +810,18 @@ class PlasmaSync(AbstractModule):
 
         if not _update_state_from_text(text_from_html):
             return None
-
         if _CURRENT_TEXT is None:
             return None
 
-        written: List[str] = []
+        ignore: IgnoreMap = {}
 
         if _write_if_changed(todo_file, _CURRENT_TEXT):
-            written.append(os.path.abspath(todo_file))
+            _inc_ignore(ignore, todo_file, 1)
 
         html_new = _text_to_plasma_html(_CURRENT_TEXT)
         if _write_if_changed(html_path, html_new):
-            written.append(os.path.abspath(html_path))
+            _inc_ignore(ignore, html_path, 1)
 
-        if written:
+        if ignore:
             logger.info("Sync Plasma -> TODO: %s -> %s", html_path, todo_file)
-
-        return written or None
+        return ignore or None

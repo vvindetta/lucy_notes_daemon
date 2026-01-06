@@ -15,7 +15,7 @@ class TodoFormatter(AbstractModule):
     priority: int = 10
 
     template = [
-        ("--todo", str, None),
+        ("--todo", bool, False),
     ]
 
     def _apply(

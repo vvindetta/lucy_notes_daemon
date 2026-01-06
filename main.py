@@ -11,7 +11,7 @@ from lucy_notes_manager.modules.abstract_module import AbstractModule
 from lucy_notes_manager.modules.banner import Banner
 
 # from lucy_notes_manager.modules.git import Git
-# from lucy_notes_manager.modules.plasma_sync import PlasmaSync
+from lucy_notes_manager.modules.plasma_sync import PlasmaSync
 from lucy_notes_manager.modules.renamer import Renamer
 from lucy_notes_manager.modules.sys_info import SysInfo
 from lucy_notes_manager.modules.todo_formatter import TodoFormatter
@@ -37,7 +37,7 @@ MODULES: List[AbstractModule] = [
     Renamer(),
     TodoFormatter(),
     SysInfo(),
-    # (PlasmaSync()),
+    PlasmaSync(),
     # (Git()),
 ]
 

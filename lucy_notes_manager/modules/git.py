@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import subprocess
 import threading
@@ -5,16 +7,18 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from queue import Empty, Queue
-from typing import Any, Dict, List, Union, cast
-
-from watchdog.events import FileSystemEvent
+from typing import Any, Dict, Optional, Union
 
 from lucy_notes_manager.lib import safe_notify
-from lucy_notes_manager.lib.args import parse_args
-from lucy_notes_manager.modules.abstract_module import AbstractModule
+from lucy_notes_manager.lib.args import Template
+from lucy_notes_manager.modules.abstract_module import (
+    AbstractModule,
+    Context,
+    IgnoreMap,
+    System,
+)
 
 PathLike = Union[str, bytes]
-KnownArgs = Dict[str, List[Any]]
 
 
 @dataclass
@@ -36,24 +40,24 @@ class Git(AbstractModule):
     default_commit_message: str = "Auto-commit"
     default_timestamp_format: str = "%Y-%m-%d_%H-%M-%S"
 
-    # NOTE: --gkey must be PRIVATE key path (no .pub)
-    template = (
-        ("--gmsg", str),
-        ("--tsmsg", bool),
-        ("--tsfmt", str),
-        ("--gkey", str),
-    )
-
-    # ---- performance knobs ----
-    debounce_seconds: float = 0.8  # merge events inside this window
-    git_timeout_sec: float = 8  # git add/status/commit timeout
-    push_timeout_sec: float = 20  # git push timeout
-    push_backoff_start_sec: float = 5.0  # backoff if push fails
-    push_backoff_max_sec: float = 120.0
+    # All git params start with --git-
+    template: Template = [
+        # commit/push behavior
+        ("--git-msg", str, None),
+        ("--git-tsmsg", bool, False),
+        ("--git-tsfmt", str, None),
+        ("--git-key", str, None),  # NOTE: private key path (no .pub)
+        # ---- performance knobs ----
+        ("--git-debounce-seconds", float, 0.8),
+        ("--git-timeout-sec", float, 8.0),  # add/status/commit timeout
+        ("--git-push-timeout-sec", float, 20.0),  # push timeout
+        ("--git-push-backoff-start-sec", float, 5.0),  # backoff start
+        ("--git-push-backoff-max-sec", float, 120.0),  # backoff cap
+    ]
 
     def __init__(self) -> None:
         super().__init__()
-        self._q: Queue[tuple[str, str, list[str], KnownArgs]] = Queue()
+        self._q: Queue[tuple[str, str, list[str], dict]] = Queue()
         self._pending: dict[str, _RepoBatch] = {}
         self._pending_lock = threading.Lock()
 
@@ -75,15 +79,35 @@ class Git(AbstractModule):
         return path
 
     @staticmethod
+    def _abs(p: str) -> str:
+        return os.path.abspath(os.path.expanduser(p))
+
+    @staticmethod
+    def _cfg_first(cfg: dict, key: str) -> Any:
+        v = cfg.get(key)
+        if isinstance(v, list):
+            return v[0] if v else None
+        return v
+
+    @staticmethod
+    def _cfg_float(cfg: dict, key: str, default: float) -> float:
+        v = Git._cfg_first(cfg, key)
+        try:
+            if v is None or v == "":
+                return float(default)
+            return float(v)
+        except (TypeError, ValueError):
+            return float(default)
+
+    @staticmethod
     def _path_is_inside_git_dir(path: str) -> bool:
-        # extra protection (even if ChangeHandler already ignores .git)
         parts = os.path.abspath(path).split(os.sep)
         return ".git" in parts
 
     @staticmethod
     def _find_git_root(path: str) -> str | None:
         cur = os.path.abspath(path)
-        if os.path.isfile(cur):
+        if not os.path.isdir(cur):
             cur = os.path.dirname(cur)
 
         while True:
@@ -96,23 +120,15 @@ class Git(AbstractModule):
 
     # ---------------- git env / run ----------------
 
-    def _git_env(self, known_args: KnownArgs) -> Dict[str, str]:
-        """
-        Build environment for git commands.
-        If --gkey is provided, force ssh to use that key (BatchMode prevents prompts).
-        """
+    def _git_env(self, cfg: dict) -> Dict[str, str]:
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
 
-        key_list = known_args.get("gkey")
-        if not key_list:
-            return env
-
-        key_raw = key_list[0]
+        key_raw = self._cfg_first(cfg, "git_key")
         if not isinstance(key_raw, str) or not key_raw:
             return env
 
-        key_path = os.path.abspath(os.path.expanduser(key_raw))
+        key_path = self._abs(key_raw)
         if not os.path.isfile(key_path):
             safe_notify(
                 name=f"gkey-missing:{key_path}",
@@ -148,25 +164,21 @@ class Git(AbstractModule):
 
     # ---------------- commit message ----------------
 
-    def _get_base_msg(self, known: KnownArgs) -> str:
+    def _get_base_msg(self, cfg: dict) -> str:
         base = self.default_commit_message
-        gmsg = known.get("gmsg")
-        if gmsg and isinstance(gmsg[0], str) and gmsg[0]:
-            base = gmsg[0]
+        msg = self._cfg_first(cfg, "git_msg")
+        if isinstance(msg, str) and msg:
+            base = msg
         return base
 
-    def _get_tsfmt(self, known: KnownArgs) -> str:
-        tsfmt = known.get("tsfmt")
-        if tsfmt and isinstance(tsfmt[0], str) and tsfmt[0]:
-            return tsfmt[0]
+    def _get_tsfmt(self, cfg: dict) -> str:
+        tsfmt = self._cfg_first(cfg, "git_tsfmt")
+        if isinstance(tsfmt, str) and tsfmt:
+            return tsfmt
         return self.default_timestamp_format
 
     @staticmethod
     def _parse_porcelain_paths(porcelain: str) -> list[str]:
-        """
-        Extract file paths from `git status --porcelain` output.
-        Handles rename lines like: R  old -> new
-        """
         out: list[str] = []
         for line in (porcelain or "").splitlines():
             line = line.rstrip("\n")
@@ -201,21 +213,21 @@ class Git(AbstractModule):
     # ---------------- batching worker ----------------
 
     def _enqueue(
-        self, repo_root: str, event_type: str, paths: list[str], known: KnownArgs
+        self, repo_root: str, event_type: str, paths: list[str], cfg: dict
     ) -> None:
-        self._q.put((repo_root, event_type, paths, known))
+        self._q.put((repo_root, event_type, paths, dict(cfg)))
 
     def _worker_loop(self) -> None:
         while True:
             # 1) ingest new events
             try:
-                repo_root, event_type, paths, known = self._q.get(timeout=0.2)
+                repo_root, event_type, paths, cfg = self._q.get(timeout=0.2)
                 now = time.time()
 
-                base_msg = self._get_base_msg(known)
-                tsmsg = bool(known.get("tsmsg"))  # keep old semantics
-                tsfmt = self._get_tsfmt(known)
-                env = self._git_env(known)
+                base_msg = self._get_base_msg(cfg)
+                tsmsg = bool(self._cfg_first(cfg, "git_tsmsg"))
+                tsfmt = self._get_tsfmt(cfg)
+                env = self._git_env(cfg)
 
                 with self._pending_lock:
                     batch = self._pending.get(repo_root)
@@ -229,7 +241,7 @@ class Git(AbstractModule):
                         )
                         self._pending[repo_root] = batch
 
-                    # update batch (latest options win)
+                    # latest options win
                     batch.base_msg = base_msg
                     batch.tsmsg = tsmsg
                     batch.tsfmt = tsfmt
@@ -244,12 +256,29 @@ class Git(AbstractModule):
             except Empty:
                 pass
 
-            # 2) flush batches that are quiet long enough
+            # 2) flush batches that are quiet long enough (per-batch debounce read from config snapshot)
             now = time.time()
             due: list[_RepoBatch] = []
+
             with self._pending_lock:
                 for root, batch in list(self._pending.items()):
-                    if now - batch.last_event_at >= self.debounce_seconds:
+                    # debounce is per-batch (taken from last event config)
+                    debounce = self._cfg_float(
+                        {
+                            "git_debounce_seconds": self._cfg_first(
+                                {"git_debounce_seconds": None}, "git_debounce_seconds"
+                            )
+                        },
+                        "git_debounce_seconds",
+                        0.8,
+                    )
+                    # ^ we don't have cfg here; debounce is stored in batch by design choice below.
+                    # We'll store debounce in batch.env-free way: reuse batch.tsfmt slot? no.
+                    # Instead: we compute debounce from batch.env? no.
+                    # So: store debounce in env dict under a private key at enqueue time.
+                    debounce = float(batch.env.get("__git_debounce_seconds", 0.8))
+
+                    if now - batch.last_event_at >= debounce:
                         due.append(batch)
                         del self._pending[root]
 
@@ -260,11 +289,14 @@ class Git(AbstractModule):
         root = batch.repo_root
         env = batch.env
 
+        git_timeout = float(env.get("__git_timeout_sec", 8.0))
+        push_timeout = float(env.get("__git_push_timeout_sec", 20.0))
+        backoff_start = float(env.get("__git_push_backoff_start_sec", 5.0))
+        backoff_max = float(env.get("__git_push_backoff_max_sec", 120.0))
+
         # stage
         try:
-            p_add = self._run_git(
-                root, ["add", "-A"], env, timeout_sec=self.git_timeout_sec
-            )
+            p_add = self._run_git(root, ["add", "-A"], env, timeout_sec=git_timeout)
         except subprocess.TimeoutExpired:
             safe_notify(
                 name=f"timeout:add:{root}", message=f"git add timed out:\n{root}"
@@ -282,7 +314,7 @@ class Git(AbstractModule):
         # status
         try:
             p_status = self._run_git(
-                root, ["status", "--porcelain"], env, timeout_sec=self.git_timeout_sec
+                root, ["status", "--porcelain"], env, timeout_sec=git_timeout
             )
         except subprocess.TimeoutExpired:
             safe_notify(
@@ -307,7 +339,7 @@ class Git(AbstractModule):
 
             try:
                 p_commit = self._run_git(
-                    root, ["commit", "-m", msg], env, timeout_sec=self.git_timeout_sec
+                    root, ["commit", "-m", msg], env, timeout_sec=git_timeout
                 )
             except subprocess.TimeoutExpired:
                 safe_notify(
@@ -318,7 +350,7 @@ class Git(AbstractModule):
 
             if p_commit.returncode != 0:
                 out = (
-                    ((p_commit.stderr or "") + "\n" + (p_commit.stdout or ""))
+                    (((p_commit.stderr or "") + "\n" + (p_commit.stdout or "")))
                     .strip()
                     .lower()
                 )
@@ -339,92 +371,113 @@ class Git(AbstractModule):
             return
 
         try:
-            p_push = self._run_git(
-                root, ["push"], env, timeout_sec=self.push_timeout_sec
-            )
+            p_push = self._run_git(root, ["push"], env, timeout_sec=push_timeout)
         except subprocess.TimeoutExpired:
-            self._push_register_fail(root)
+            self._push_register_fail(root, backoff_start, backoff_max)
             safe_notify(
                 name=f"timeout:push:{root}", message=f"git push timed out:\n{root}"
             )
             return
 
         if p_push.returncode != 0:
-            self._push_register_fail(root)
+            self._push_register_fail(root, backoff_start, backoff_max)
             err = (p_push.stderr or p_push.stdout or "git push failed").strip()
             safe_notify(
                 name=f"pushfail:{root}",
                 message=f"Repository:\n{root}\n\nCommand:\ngit push\n\nError:\n{err[:1200]}",
             )
         else:
-            self._push_backoff[root] = self.push_backoff_start_sec
+            self._push_backoff[root] = backoff_start
             self._push_next_allowed_at[root] = 0.0
 
-    def _push_register_fail(self, root: str) -> None:
-        backoff = self._push_backoff.get(root, self.push_backoff_start_sec)
-        backoff = min(
-            max(backoff, self.push_backoff_start_sec) * 2.0, self.push_backoff_max_sec
-        )
+    def _push_register_fail(
+        self, root: str, backoff_start: float, backoff_max: float
+    ) -> None:
+        backoff = self._push_backoff.get(root, backoff_start)
+        backoff = min(max(backoff, backoff_start) * 2.0, backoff_max)
         self._push_backoff[root] = backoff
         self._push_next_allowed_at[root] = time.time() + backoff
 
-    # ---------------- event handlers ----------------
-    # New AbstractModule contract: return List[str] | None
-    # This module does not write files directly -> always returns None.
+    # ---------------- event handlers (new contract) ----------------
 
-    def created(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        known_raw, _ = parse_args(self.template, args)
-        known = cast(KnownArgs, known_raw)
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._handle(ctx, system, "created")
 
-        path = self._to_str(event.src_path)
-        if self._path_is_inside_git_dir(path):
-            return None
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._handle(ctx, system, "modified")
 
-        root = self._find_git_root(path)
-        if root:
-            self._enqueue(root, "created", [path], known)
-        return None
+    def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._handle(ctx, system, "deleted")
 
-    def modified(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        known_raw, _ = parse_args(self.template, args)
-        known = cast(KnownArgs, known_raw)
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+        return self._handle(ctx, system, "moved")
 
-        path = self._to_str(event.src_path)
-        if self._path_is_inside_git_dir(path):
-            return None
+    def _handle(
+        self, ctx: Context, system: System, event_type: str
+    ) -> Optional[IgnoreMap]:
+        ev = system.event
 
-        root = self._find_git_root(path)
-        if root:
-            self._enqueue(root, "modified", [path], known)
-        return None
-
-    def deleted(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        known_raw, _ = parse_args(self.template, args)
-        known = cast(KnownArgs, known_raw)
-
-        path = self._to_str(event.src_path)
-        if self._path_is_inside_git_dir(path):
-            return None
-
-        root = self._find_git_root(path)
-        if root:
-            self._enqueue(root, "deleted", [path], known)
-        return None
-
-    def moved(self, args: List[str], event: FileSystemEvent) -> List[str] | None:
-        known_raw, _ = parse_args(self.template, args)
-        known = cast(KnownArgs, known_raw)
-
-        src = self._to_str(event.src_path)
-        dest_raw = getattr(event, "dest_path", None)
+        src = self._to_str(getattr(ev, "src_path", "") or "")
+        dest_raw = getattr(ev, "dest_path", None)
         dest = self._to_str(dest_raw) if dest_raw is not None else ""
+
+        src = self._abs(src) if src else ""
+        dest = self._abs(dest) if dest else ""
 
         if (src and self._path_is_inside_git_dir(src)) or (
             dest and self._path_is_inside_git_dir(dest)
         ):
             return None
 
-        root = self._find_git_root(dest or src)
-        if root:
-            self._enqueue(root, "moved", [src, dest], known)
+        root = self._find_git_root(ctx.path) or self._find_git_root(dest or src)
+        if not root:
+            return None
+
+        # read knobs from ctx.config (already merged + defaults)
+        debounce = self._cfg_float(ctx.config, "git_debounce_seconds", 0.8)
+        git_timeout = self._cfg_float(ctx.config, "git_timeout_sec", 8.0)
+        push_timeout = self._cfg_float(ctx.config, "git_push_timeout_sec", 20.0)
+        backoff_start = self._cfg_float(ctx.config, "git_push_backoff_start_sec", 5.0)
+        backoff_max = self._cfg_float(ctx.config, "git_push_backoff_max_sec", 120.0)
+
+        # batch env (store knobs in env so worker can use them later per-repo-batch)
+        env = self._git_env(ctx.config)
+        env["__git_debounce_seconds"] = str(debounce)
+        env["__git_timeout_sec"] = str(git_timeout)
+        env["__git_push_timeout_sec"] = str(push_timeout)
+        env["__git_push_backoff_start_sec"] = str(backoff_start)
+        env["__git_push_backoff_max_sec"] = str(backoff_max)
+
+        base_msg = self._get_base_msg(ctx.config)
+        tsmsg = bool(self._cfg_first(ctx.config, "git_tsmsg"))
+        tsfmt = self._get_tsfmt(ctx.config)
+
+        with self._pending_lock:
+            batch = self._pending.get(root)
+            if not batch:
+                batch = _RepoBatch(
+                    repo_root=root,
+                    base_msg=base_msg,
+                    tsmsg=tsmsg,
+                    tsfmt=tsfmt,
+                    env=env,
+                )
+                self._pending[root] = batch
+
+            # latest options win
+            batch.base_msg = base_msg
+            batch.tsmsg = tsmsg
+            batch.tsfmt = tsfmt
+            batch.env = env
+            batch.last_event_at = time.time()
+            batch.event_types.add(event_type)
+
+            if event_type != "moved":
+                batch.hinted_paths.add(ctx.path)
+            else:
+                if src:
+                    batch.hinted_paths.add(src)
+                if dest:
+                    batch.hinted_paths.add(dest)
+
         return None

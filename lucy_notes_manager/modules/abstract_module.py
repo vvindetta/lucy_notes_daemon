@@ -61,7 +61,7 @@ class AbstractModule(ABC):
 
     Template:
     - 'template': flags this module adds to the global argument template.
-        Can be set up as default.
+        Default can be setup.
 
     - example:
         [

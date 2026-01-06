@@ -1,8 +1,7 @@
 import os
 import subprocess
-import sys
 import time
-from typing import Dict, Iterable, Tuple
+from typing import Dict, List
 
 _NOTIFY_LAST: Dict[str, float] = {}
 _NOTIFY_MIN_INTERVAL_SEC = 10.0
@@ -23,7 +22,7 @@ def safe_notify(name: str, message: str) -> None:
     notify(message=message)
 
 
-def notify(message: str, title: str = "Lucy Note Manager"):
+def notify(message: str, title: str = "Lucy Note Manager") -> None:
     """
     Send desktop notification via notify-send.
     Fails silently if notify-send is unavailable.
@@ -37,49 +36,28 @@ def notify(message: str, title: str = "Lucy Note Manager"):
         pass
 
 
-def slow_print_by_lines(
+def slow_write_lines_from(
     path: str,
-    lines: Iterable[Tuple[int, str]],
+    lines: List[str],
+    from_line: int,
     delay: float = 0.2,
 ) -> Dict[str, int]:
-    """
-    Print (lineno, text) with delay.
-    Returns {abs_path: N} where N is how many lines were printed.
-    """
     abs_path = os.path.abspath(path)
-    writes = 0
+    from_idx = max(0, int(from_line) - 1)
 
-    for lineno, text in lines:
-        line = text if text.endswith("\n") else text + "\n"
-        sys.stdout.write(f"{lineno}: {line}")
-        sys.stdout.flush()
-        writes += 1
-        time.sleep(delay)
+    slow_writes = 0
 
-    return {abs_path: writes}
+    with open(abs_path, "w", encoding="utf-8") as f:
+        # fast part
+        if from_idx > 0:
+            f.writelines(lines[:from_idx])
 
+        # slow part
+        for line in lines[from_idx:]:
+            f.write(line)
+            f.flush()
+            slow_writes += 1
+            time.sleep(delay)
 
-def slow_print(
-    path: str,
-    start_line: int,
-    text: str,
-    delay: float = 0.2,
-) -> Dict[str, int]:
-    """
-    Print multi-line text starting from start_line with delay.
-    Returns {abs_path: N} where N is how many lines were printed.
-    """
-    abs_path = os.path.abspath(path)
-    writes = 0
-    lineno = start_line
-
-    for line in text.splitlines(True):  # keep '\n'
-        if not line.endswith("\n"):
-            line += "\n"
-        sys.stdout.write(f"{lineno}: {line}")
-        sys.stdout.flush()
-        writes += 1
-        time.sleep(delay)
-        lineno += 1
-
-    return {abs_path: writes}
+    # if slow part was empty, file still changed -> ignore once
+    return {abs_path: slow_writes or 1}
