@@ -76,6 +76,13 @@ def _hash_text(text: str) -> str:
 
 
 def _normalize_text(text: str) -> str:
+    """
+    Normalization goals:
+    - stable newlines
+    - trim leading/trailing blank lines
+    - collapse multiple blank lines to at most 1
+    - keep tight formatting around lists (no blank between '-' items or after ':' before list)
+    """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.splitlines()
     n = len(lines)
@@ -140,9 +147,17 @@ def _update_state_from_text(text: str) -> bool:
 
 
 class _PlasmaHTMLParser(HTMLParser):
+    """
+    IMPORTANT FIX:
+    HTMLParser emits handle_data() for whitespace between tags.
+    Plasma HTML has newlines between <p>...</p> blocks,
+    and we must NOT treat those as user content.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self._in_body = False
+        self._in_block = False  # inside <p> or <li>
         self._current: Optional[str] = None
         self._lines: List[str] = []
 
@@ -157,10 +172,17 @@ class _PlasmaHTMLParser(HTMLParser):
             return
 
         if tag in ("p", "li"):
-            if self._current is not None:
+            # close previous block if still open
+            if self._current is not None and self._in_block:
                 self._lines.append(self._current)
             self._current = ""
-        elif tag == "br":
+            self._in_block = True
+            return
+
+        if not self._in_block:
+            return
+
+        if tag == "br":
             if self._current is None:
                 self._current = ""
             self._current += "\n"
@@ -169,10 +191,11 @@ class _PlasmaHTMLParser(HTMLParser):
         tag = tag.lower()
 
         if tag == "body":
-            if self._current is not None:
+            if self._current is not None and self._in_block:
                 self._lines.append(self._current)
-                self._current = None
+            self._current = None
             self._in_body = False
+            self._in_block = False
             return
 
         if not self._in_body:
@@ -183,18 +206,30 @@ class _PlasmaHTMLParser(HTMLParser):
                 self._current = ""
             self._lines.append(self._current)
             self._current = None
+            self._in_block = False
 
     def handle_data(self, data):
         if not self._in_body:
             return
+        if not isinstance(data, str):
+            return
+
+        # CRITICAL: ignore whitespace-only text nodes between tags
+        if not self._in_block and data.strip() == "":
+            return
+
         if self._current is None:
+            # Only start collecting if it has real content
+            if data.strip() == "":
+                return
             self._current = ""
         self._current += data
 
     def get_text(self) -> str:
-        if self._current is not None:
+        if self._current is not None and self._in_block:
             self._lines.append(self._current)
-            self._current = None
+        self._current = None
+        self._in_block = False
         return "\n".join(self._lines)
 
 
@@ -259,9 +294,15 @@ def _style_is_bold(style: str) -> bool:
 
 
 class _PlasmaBoldAwareParser(HTMLParser):
+    """
+    Same whitespace-between-tags problem exists here too.
+    We must ignore whitespace-only data outside block tags.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self._in_body = False
+        self._in_block = False  # inside <p>/<li>/<font> etc.
         self._bold_depth = 0
         self._span_bold_stack: List[bool] = []
         self._tag_style_bold: Dict[str, List[bool]] = {"p": [], "li": [], "font": []}
@@ -303,6 +344,11 @@ class _PlasmaBoldAwareParser(HTMLParser):
         if not self._in_body:
             return
 
+        if tag in ("p", "li", "font"):
+            self._in_block = True
+            self._push_tag_style_bold(tag, attrs)
+            return
+
         if tag in ("b", "strong"):
             self._bold_depth += 1
             return
@@ -319,10 +365,6 @@ class _PlasmaBoldAwareParser(HTMLParser):
                 self._bold_depth += 1
             return
 
-        if tag in ("p", "li", "font"):
-            self._push_tag_style_bold(tag, attrs)
-            return
-
         if tag == "br":
             self._newline()
             return
@@ -332,6 +374,7 @@ class _PlasmaBoldAwareParser(HTMLParser):
 
         if tag == "body":
             self._in_body = False
+            self._in_block = False
             return
         if not self._in_body:
             return
@@ -351,11 +394,15 @@ class _PlasmaBoldAwareParser(HTMLParser):
             self._pop_tag_style_bold(tag)
             if tag in ("p", "li"):
                 self._newline()
+            self._in_block = False
             return
 
     def handle_data(self, data):
-        if self._in_body and isinstance(data, str):
-            self._append(data)
+        if not self._in_body or not isinstance(data, str):
+            return
+        if not self._in_block and data.strip() == "":
+            return
+        self._append(data)
 
     def get_lines(self) -> List[List[Tuple[str, bool]]]:
         merged_lines: List[List[Tuple[str, bool]]] = []
