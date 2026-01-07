@@ -25,16 +25,16 @@ class SysInfo(AbstractModule):
             "Print config values that differ from defaults (and where they were set).",
         ),
         (
-            "--args",
+            "--man",
             str,
             None,
-            "Print argument help. Use: --args (compact) OR --args full OR --args <name> (example: --args todo).",
+            "Argument manual. Use: --man list OR --man full OR --man <name> (example: --man todo).",
         ),
         (
             "--help",
             bool,
             False,
-            "Print SysInfo commands help: --mods, --args, --config.",
+            "Print SysInfo commands help: --mods, --man, --config.",
         ),
         ("--sys-event", bool, False, "Print current filesystem event details."),
     ]
@@ -58,9 +58,9 @@ class SysInfo(AbstractModule):
         return [
             "* --mods: print loaded modules and their priorities\n",
             "* --config: print config values that differ from defaults\n",
-            "* --args: print all arguments without description\n"
-            "* --args full: print all arguments\n",
-            "* --args <name>: print one argument (example: --args todo)\n",
+            "* --man list: print all arguments (no descriptions)\n",
+            "* --man full: print all arguments with descriptions\n",
+            "* --man <name>: print one argument with description (example: --man todo)\n",
         ]
 
     @staticmethod
@@ -70,14 +70,14 @@ class SysInfo(AbstractModule):
             return ""
         return text.lstrip("-").strip().lower()
 
-    def _compact_args_help_lines(self, system: System) -> List[str]:
+    def _man_list_lines(self, system: System) -> List[str]:
         lines: List[str] = []
         for flag, typ, default, _desc in system.global_template:
             type_name = self._type_name(typ)
             lines.append(f"* {flag} type={type_name} default={default}\n")
         return lines or ["* (no args)\n"]
 
-    def _full_args_help_lines(self, system: System) -> List[str]:
+    def _man_full_lines(self, system: System) -> List[str]:
         lines: List[str] = []
         for flag, typ, default, desc in system.global_template:
             type_name = self._type_name(typ)
@@ -87,13 +87,11 @@ class SysInfo(AbstractModule):
             )
         return lines or ["* (no args)\n"]
 
-    def _single_arg_help_lines(
-        self, system: System, requested_names: List[str]
-    ) -> List[str]:
+    def _man_one_lines(self, system: System, requested_names: List[str]) -> List[str]:
         requested = [self._normalize_arg_name(item) for item in (requested_names or [])]
         requested = [item for item in requested if item]
         if not requested:
-            return self._compact_args_help_lines(system)
+            return ["* (missing name)\n"]
 
         requested_set = set(requested)
         matched: List[str] = []
@@ -113,22 +111,22 @@ class SysInfo(AbstractModule):
 
         return [f"* (unknown arg: {', '.join(requested)})\n"]
 
-    def _args_help_lines(self, system: System, requests: List[str]) -> List[str]:
+    def _man_lines(self, system: System, requests: List[str]) -> List[str]:
         normalized_requests = [
             self._normalize_arg_name(item) for item in (requests or [])
         ]
         normalized_requests = [item for item in normalized_requests if item]
 
-        # --args (no values) -> compact like old version
         if not normalized_requests:
-            return self._compact_args_help_lines(system)
+            return ["* (missing man mode: list/full/name)\n"]
 
-        # --args full -> full with descriptions
-        if any(item == "full" for item in normalized_requests):
-            return self._full_args_help_lines(system)
+        if normalized_requests[0] == "list":
+            return self._man_list_lines(system)
 
-        # --args <name> -> only those
-        return self._single_arg_help_lines(system, normalized_requests)
+        if normalized_requests[0] == "full":
+            return self._man_full_lines(system)
+
+        return self._man_one_lines(system, normalized_requests)
 
     def _build_block(
         self,
@@ -137,9 +135,9 @@ class SysInfo(AbstractModule):
         ctx: Context,
         selected_opts: set[str],
         path: str,
-        args_requests: List[str],
+        man_requests: List[str],
     ) -> List[str]:
-        ordered = ["mods", "help", "args", "config", "event"]
+        ordered = ["mods", "help", "man", "config", "event"]
         title_parts = [name for name in ordered if name in selected_opts]
         title = "+".join(title_parts) if title_parts else "sys"
 
@@ -159,8 +157,8 @@ class SysInfo(AbstractModule):
                 lines.append(f"* {module.name} ({getattr(module, 'priority', None)})\n")
             lines.append("\n")
 
-        if "args" in selected_opts:
-            lines.extend(self._args_help_lines(system, args_requests))
+        if "man" in selected_opts:
+            lines.extend(self._man_lines(system, man_requests))
             lines.append("\n")
 
         if "config" in selected_opts:
@@ -203,7 +201,7 @@ class SysInfo(AbstractModule):
     def _apply(self, *, ctx: Context, system: System) -> Optional[IgnoreMap]:
         line_to_opts: dict[int, set[str]] = {}
         line_to_remove_flags: dict[int, List[str]] = {}
-        line_to_args_requests: dict[int, List[str]] = {}
+        line_to_man_requests: dict[int, List[str]] = {}
 
         def add_option(lineno_1based: int, option_name: str, remove_flag: str) -> None:
             line_to_opts.setdefault(lineno_1based, set()).add(option_name)
@@ -225,15 +223,15 @@ class SysInfo(AbstractModule):
             for lineno_1based in ctx.arg_lines.get("sys_event") or []:
                 add_option(int(lineno_1based), "event", "--sys-event")
 
-        args_values = ctx.config.get("args") or []
-        args_lines = ctx.arg_lines.get("args") or []
-        if isinstance(args_values, list) and isinstance(args_lines, list):
-            for args_value, lineno_1based in zip(args_values, args_lines):
+        man_values = ctx.config.get("man") or []
+        man_lines = ctx.arg_lines.get("man") or []
+        if isinstance(man_values, list) and isinstance(man_lines, list):
+            for man_value, lineno_1based in zip(man_values, man_lines):
                 lineno_int = int(lineno_1based)
-                add_option(lineno_int, "args", "--args")
-                if args_value is not None and str(args_value).strip():
-                    line_to_args_requests.setdefault(lineno_int, []).append(
-                        str(args_value).strip()
+                add_option(lineno_int, "man", "--man")
+                if man_value is not None and str(man_value).strip():
+                    line_to_man_requests.setdefault(lineno_int, []).append(
+                        str(man_value).strip()
                     )
 
         if not line_to_opts:
@@ -252,14 +250,14 @@ class SysInfo(AbstractModule):
             index = max(0, min(len(file_lines) - 1, lineno_1based - 1))
             selected_opts = line_to_opts[lineno_1based]
             remove_flags = line_to_remove_flags[lineno_1based]
-            args_requests = line_to_args_requests.get(lineno_1based, [])
+            man_requests = line_to_man_requests.get(lineno_1based, [])
 
             block = self._build_block(
                 system=system,
                 ctx=ctx,
                 selected_opts=selected_opts,
                 path=ctx.path,
-                args_requests=args_requests,
+                man_requests=man_requests,
             )
 
             if index == 0:
