@@ -29,8 +29,8 @@ class TodoFormatter(AbstractModule):
             return None
 
         ext = os.path.splitext(path)[1].lstrip(".").lower()
-        if ext != "md":
-            return None
+        # if ext != "md":
+        #     return None
 
         try:
             with open(path, "r", encoding="utf-8") as f:

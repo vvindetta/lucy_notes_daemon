@@ -34,7 +34,7 @@ class FileHandler(FileSystemEventHandler):
                 return
             logger.info(f"EVENT: Moved: {event.src_path} → {event.dest_path}")
         else:
-            if self._check_and_delete_ignore(event.src_path):
+            if self._check_and_delete_ignore(file_path):
                 return
             logger.info(
                 f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}"

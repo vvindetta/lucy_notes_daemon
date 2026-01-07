@@ -19,9 +19,9 @@ class SysInfo(AbstractModule):
 
     template = [
         ("--mods", bool, False),
+        ("--config", bool, False),
         ("--help", bool, False),
         ("--sys-event", bool, False),
-        ("--config", bool, False),  # ✅ param name: --config
         ("--sys-slow-print", bool, False),
     ]
 

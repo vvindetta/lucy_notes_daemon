@@ -20,7 +20,7 @@ class Banner(AbstractModule):
 
     template = [
         ("--banner", str, None),
-        ("--separator", str, ["---"]),
+        ("--banner-separator", str, ["---"]),
     ]
 
     def _apply(
@@ -34,7 +34,7 @@ class Banner(AbstractModule):
         if banner_text == "date":
             banner_text = str(date.today())
 
-        sep = str(config["separator"][0]).strip()
+        sep = str(config["banner_separator"][0]).strip()
         sep_line = sep + ("\n" if not sep.endswith("\n") else "")
 
         lineno_1based = arg_lines["banner"][0]

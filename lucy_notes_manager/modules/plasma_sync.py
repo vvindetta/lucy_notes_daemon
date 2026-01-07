@@ -558,12 +558,11 @@ class PlasmaSync(AbstractModule):
     name: str = "plasma_notes_sync"
     priority: int = 30
 
-    # NO DEFAULTS. All must come from config/args.
     template: Template = [
         ("--plasma-notes-dir", str, None),  # REQUIRED
         ("--plasma-note-id", str, None),  # REQUIRED
-        ("--todo-file", str, None),  # REQUIRED
         ("--plasma-bold-note-id", str, None),  # optional
+        ("--todo-file", str, None),  # REQUIRED
     ]
 
     def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
