@@ -18,10 +18,33 @@ class ModuleManager:
     def __init__(self, modules: List[AbstractModule], args):
         self.modules = modules
         self.template: Template = [
-            ("--force", str, []),
-            ("--exclude", str, []),
-            ("--priority", str, None),
-            ("--use_only_first_line", bool, False),
+            (
+                "--force",
+                str,
+                [],
+                "Force-enable modules by name even if they are excluded. "
+                "Example: --force git todo",
+            ),
+            (
+                "--exclude",
+                str,
+                [],
+                "Disable modules by name. Can be overridden per module via --force. "
+                "Example: --exclude git todo",
+            ),
+            (
+                "--sys-priority",
+                str,
+                None,
+                "Override module execution order (lower runs first). "
+                "Format: name=int. Example: --sys-priority banner=5 renamer=20 todo=30",
+            ),
+            (
+                "--sys-use_only_first_line",
+                bool,
+                False,
+                "If true, parse module arguments only from the first line of the file (faster, but ignores flags below).",
+            ),
         ]
 
         for module in self.modules:
@@ -29,7 +52,7 @@ class ModuleManager:
 
         self.config, _ = parse_args(args=args, template=self.template)
 
-        priority_dict = self._parse_priority_list(self.config.get("priority") or [])
+        priority_dict = self._parse_priority_list(self.config.get("sys_priority") or [])
         self.modules.sort(key=lambda m: priority_dict.get(m.name, m.priority))
 
     def run(self, path: str, event: FileSystemEvent) -> Dict[str, int] | None:
@@ -37,7 +60,7 @@ class ModuleManager:
             known_args, _, arg_lines = get_args_from_file(
                 path=path,
                 template=self.template,
-                only_first_line=self.config["use_only_first_line"],
+                only_first_line=self.config["sys_use_only_first_line"],
             )
             merged_known_args = merge_known_args(
                 args=self.config, overwrite_args=known_args

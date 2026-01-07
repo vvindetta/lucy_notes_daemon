@@ -44,16 +44,34 @@ class Cmd(AbstractModule):
     priority: int = 50
 
     template = [
-        ("--c", str, None),  # command tokens (nargs="+" in your argparse wrapper)
-        ("--cmd-timeout", int, [5]),  # seconds
-        ("--cmd-max-bytes", int, [20000]),  # clip stdout+stderr written into file
-        ("--cmd-show-stderr", bool, True),
-        ("--cmd-show-stdout", bool, True),
+        (
+            "--c",
+            str,
+            None,
+            "Command tokens to execute (nargs='+'). Example: --c ls -la",
+        ),
+        ("--cmd-timeout", int, [5], "Timeout in seconds for each command run."),
+        (
+            "--cmd-max-bytes",
+            int,
+            [20000],
+            "Maximum bytes of stdout/stderr written into the file (output is clipped).",
+        ),
+        (
+            "--cmd-show-stderr",
+            bool,
+            True,
+            "Include stderr in the output block.",
+        ),
+        (
+            "--cmd-show-stdout",
+            bool,
+            True,
+            "Include stdout in the output block.",
+        ),
     ]
 
-    # ----------------------------
     # Collect command runs by line using ctx.arg_lines["c"]
-    # ----------------------------
     def _collect_runs(self, ctx: Context) -> List[CmdRun]:
         values = ctx.config.get("c")
         line_nums = ctx.arg_lines.get("c")
@@ -77,9 +95,7 @@ class Cmd(AbstractModule):
 
         return runs
 
-    # ----------------------------
     # Helpers
-    # ----------------------------
     def _to_str(self, x) -> str:
         if x is None:
             return ""
@@ -95,9 +111,7 @@ class Cmd(AbstractModule):
             return s
         return b[:max_bytes].decode("utf-8", errors="replace") + "\n…(clipped)…\n"
 
-    # ----------------------------
     # Execute command
-    # ----------------------------
     def _run_cmd(
         self, *, cmd_tokens: List[str], cwd: str, timeout: int
     ) -> Tuple[int, str, str]:
@@ -124,9 +138,7 @@ class Cmd(AbstractModule):
         except Exception as e:
             return 1, "", f"ERROR: {type(e).__name__}: {e}\n"
 
-    # ----------------------------
     # Build output block
-    # ----------------------------
     def _build_block(
         self,
         *,
@@ -164,9 +176,7 @@ class Cmd(AbstractModule):
         out.append("\n")
         return out
 
-    # ----------------------------
     # Apply (replace lines)
-    # ----------------------------
     def _apply(self, *, ctx: Context, system: System) -> Optional[IgnoreMap]:
         runs = self._collect_runs(ctx)
         if not runs:
@@ -228,9 +238,7 @@ class Cmd(AbstractModule):
 
         return {ctx.path: 1}
 
-    # ----------------------------
     # Events
-    # ----------------------------
     def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply(ctx=ctx, system=system)
 

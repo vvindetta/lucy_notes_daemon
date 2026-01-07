@@ -1,6 +1,7 @@
 import os
 from typing import Optional
 
+from lucy_notes_manager.lib.args import Template
 from lucy_notes_manager.modules.abstract_module import (
     AbstractModule,
     Context,
@@ -13,8 +14,8 @@ class Renamer(AbstractModule):
     name: str = "renamer"
     priority: int = 20
 
-    template = [
-        ("--r", str, None),
+    template: Template = [
+        ("--r", str, None, "Rename file" "Example: --r new_name.md."),
     ]
 
     def _apply(self, *, path: str, config: dict) -> Optional[IgnoreMap]:

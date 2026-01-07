@@ -2,6 +2,7 @@ import os
 import re
 from typing import List, Optional
 
+from lucy_notes_manager.lib.args import Template
 from lucy_notes_manager.modules.abstract_module import (
     AbstractModule,
     Context,
@@ -14,8 +15,13 @@ class TodoFormatter(AbstractModule):
     name: str = "todo"
     priority: int = 10
 
-    template = [
-        ("--todo", bool, False),
+    template: Template = [
+        (
+            "--todo",
+            bool,
+            False,
+            "Enable TODO formatting: converts list items like '- task' into unchecked checkboxes '- [ ] task' in the current file. ",
+        ),
     ]
 
     def _apply(
@@ -27,10 +33,6 @@ class TodoFormatter(AbstractModule):
 
         if not os.path.isfile(path):
             return None
-
-        ext = os.path.splitext(path)[1].lstrip(".").lower()
-        # if ext != "md":
-        #     return None
 
         try:
             with open(path, "r", encoding="utf-8") as f:

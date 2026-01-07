@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Optional
 
-from lucy_notes_manager.lib import slow_write_lines_from
 from lucy_notes_manager.lib.args import delete_args_from_string
 from lucy_notes_manager.modules.abstract_module import (
     AbstractModule,
@@ -18,199 +17,279 @@ class SysInfo(AbstractModule):
     priority: int = 0
 
     template = [
-        ("--mods", bool, False),
-        ("--config", bool, False),
-        ("--help", bool, False),
-        ("--sys-event", bool, False),
-        ("--sys-slow-print", bool, False),
+        ("--mods", bool, False, "Print loaded modules and their priorities."),
+        (
+            "--config",
+            bool,
+            False,
+            "Print config values that differ from defaults (and where they were set).",
+        ),
+        (
+            "--args",
+            str,
+            None,
+            "Print argument help. Use: --args (compact) OR --args full OR --args <name> (example: --args todo).",
+        ),
+        (
+            "--help",
+            bool,
+            False,
+            "Print SysInfo commands help: --mods, --args, --config.",
+        ),
+        ("--sys-event", bool, False, "Print current filesystem event details."),
     ]
 
+    @staticmethod
+    def _flag_to_dest(flag: str) -> str:
+        return flag.lstrip("-").replace("-", "_")
+
+    @staticmethod
+    def _type_name(type_value: Any) -> str:
+        return getattr(type_value, "__name__", str(type_value))
+
     def _defaults_map(self, system: System) -> dict[str, Any]:
-        """
-        Build {dest_key: default_value} from global template.
-        dest_key matches argparse dest:
-          --sys-event -> sys_event
-        """
-        out: dict[str, Any] = {}
-        for flag, _typ, default in system.global_template:
-            dest = flag.lstrip("-").replace("-", "_")
-            out[dest] = default
-        return out
+        defaults: dict[str, Any] = {}
+        for flag, _typ, default, _desc in system.global_template:
+            defaults[self._flag_to_dest(flag)] = default
+        return defaults
+
+    @staticmethod
+    def _command_help_lines() -> List[str]:
+        return [
+            "* --mods: print loaded modules and their priorities\n",
+            "* --config: print config values that differ from defaults\n",
+            "* --args: print all arguments without description\n"
+            "* --args full: print all arguments\n",
+            "* --args <name>: print one argument (example: --args todo)\n",
+        ]
+
+    @staticmethod
+    def _normalize_arg_name(raw: str) -> str:
+        text = (raw or "").strip()
+        if not text:
+            return ""
+        return text.lstrip("-").strip().lower()
+
+    def _compact_args_help_lines(self, system: System) -> List[str]:
+        lines: List[str] = []
+        for flag, typ, default, _desc in system.global_template:
+            type_name = self._type_name(typ)
+            lines.append(f"* {flag} type={type_name} default={default}\n")
+        return lines or ["* (no args)\n"]
+
+    def _full_args_help_lines(self, system: System) -> List[str]:
+        lines: List[str] = []
+        for flag, typ, default, desc in system.global_template:
+            type_name = self._type_name(typ)
+            description = (desc or "").strip()
+            lines.append(
+                f"* {flag}: {description} (type={type_name}, default={default})\n"
+            )
+        return lines or ["* (no args)\n"]
+
+    def _single_arg_help_lines(
+        self, system: System, requested_names: List[str]
+    ) -> List[str]:
+        requested = [self._normalize_arg_name(item) for item in (requested_names or [])]
+        requested = [item for item in requested if item]
+        if not requested:
+            return self._compact_args_help_lines(system)
+
+        requested_set = set(requested)
+        matched: List[str] = []
+
+        for flag, typ, default, desc in system.global_template:
+            flag_name = flag.lstrip("-").lower()
+            dest_name = self._flag_to_dest(flag).lower()
+            if flag_name in requested_set or dest_name in requested_set:
+                type_name = self._type_name(typ)
+                description = (desc or "").strip()
+                matched.append(
+                    f"* {flag}: {description} (type={type_name}, default={default})\n"
+                )
+
+        if matched:
+            return matched
+
+        return [f"* (unknown arg: {', '.join(requested)})\n"]
+
+    def _args_help_lines(self, system: System, requests: List[str]) -> List[str]:
+        normalized_requests = [
+            self._normalize_arg_name(item) for item in (requests or [])
+        ]
+        normalized_requests = [item for item in normalized_requests if item]
+
+        # --args (no values) -> compact like old version
+        if not normalized_requests:
+            return self._compact_args_help_lines(system)
+
+        # --args full -> full with descriptions
+        if any(item == "full" for item in normalized_requests):
+            return self._full_args_help_lines(system)
+
+        # --args <name> -> only those
+        return self._single_arg_help_lines(system, normalized_requests)
 
     def _build_block(
-        self, *, system: System, ctx: Context, opts: set[str], path: str
+        self,
+        *,
+        system: System,
+        ctx: Context,
+        selected_opts: set[str],
+        path: str,
+        args_requests: List[str],
     ) -> List[str]:
-        def title_from_opts(values: set[str]) -> str:
-            order = ["mods", "help", "config", "event"]
-            if len(values) == 1:
-                return next(iter(values))
-            parts = [x for x in order if x in values]
-            return "+".join(parts) if parts else "sys"
+        ordered = ["mods", "help", "args", "config", "event"]
+        title_parts = [name for name in ordered if name in selected_opts]
+        title = "+".join(title_parts) if title_parts else "sys"
 
-        title = title_from_opts(opts)
+        lines: List[str] = []
+        lines.append(f"--- {title} ---\n")
 
-        out: List[str] = []
-        out.append(f"--- {title} ---\n")
+        if "event" in selected_opts:
+            lines.append(f"time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        lines.append("\n")
 
-        # time ONLY when event is included
-        if "event" in opts:
-            out.append(f"time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        out.append("\n")
+        if "help" in selected_opts:
+            lines.extend(self._command_help_lines())
+            lines.append("\n")
 
-        if "mods" in opts:
-            for m in system.modules:
-                out.append(f"* {m.name} ({getattr(m, 'priority', None)})\n")
-            out.append("\n")
+        if "mods" in selected_opts:
+            for module in system.modules:
+                lines.append(f"* {module.name} ({getattr(module, 'priority', None)})\n")
+            lines.append("\n")
 
-        if "help" in opts:
-            for flag, typ, default in system.global_template:
-                tname = getattr(typ, "__name__", str(typ))
-                out.append(f"* {flag} type={tname} default={default}\n")
-            out.append("\n")
+        if "args" in selected_opts:
+            lines.extend(self._args_help_lines(system, args_requests))
+            lines.append("\n")
 
-        if "config" in opts:
+        if "config" in selected_opts:
             defaults = self._defaults_map(system)
-
-            any_printed = False
+            printed_any = False
 
             for key in sorted(ctx.config.keys()):
-                cur = ctx.config.get(key)
-                dflt = defaults.get(key, None)
+                current_value = ctx.config.get(key)
+                default_value = defaults.get(key, None)
 
-                # show only changed vs defaults (or keys not in template)
-                if key in defaults and cur == dflt:
+                if key in defaults and current_value == default_value:
                     continue
 
-                src = (
+                source = (
                     "file:" + ",".join(map(str, ctx.arg_lines.get(key, [])))
                     if key in ctx.arg_lines
                     else "config/default"
                 )
-                out.append(f"* {key} = {cur} (default={dflt}, src={src})\n")
-                any_printed = True
+                lines.append(
+                    f"* {key} = {current_value} (default={default_value}, src={source})\n"
+                )
+                printed_any = True
 
-            if not any_printed:
-                out.append("* (no differences from defaults)\n")
+            if not printed_any:
+                lines.append("* (no differences from defaults)\n")
 
-            out.append("\n")
+            lines.append("\n")
 
-        if "event" in opts:
-            e = system.event
-            out.append(f"* type: {getattr(e, 'event_type', None)}\n")
-            out.append(f"* is_directory: {getattr(e, 'is_directory', None)}\n")
-            out.append(f"* src_path: {getattr(e, 'src_path', None)}\n")
-            out.append(f"* dest_path: {getattr(e, 'dest_path', None)}\n")
-            out.append(f"* ctx.path: {path}\n")
-            out.append("\n")
+        if "event" in selected_opts:
+            event = system.event
+            lines.append(f"* type: {getattr(event, 'event_type', None)}\n")
+            lines.append(f"* is_directory: {getattr(event, 'is_directory', None)}\n")
+            lines.append(f"* src_path: {getattr(event, 'src_path', None)}\n")
+            lines.append(f"* dest_path: {getattr(event, 'dest_path', None)}\n")
+            lines.append(f"* ctx.path: {path}\n")
+            lines.append("\n")
 
-        return out
+        return lines
 
     def _apply(self, *, ctx: Context, system: System) -> Optional[IgnoreMap]:
-        key_to_opt = {
-            "mods": "mods",
-            "help": "help",
-            "sys_event": "event",
-            "config": "config",  # ✅ new option
-        }
-        key_to_flag = {
-            "mods": "--mods",
-            "help": "--help",
-            "sys_event": "--sys-event",
-            "config": "--config",  # ✅ param name
-        }
+        line_to_opts: dict[int, set[str]] = {}
+        line_to_remove_flags: dict[int, List[str]] = {}
+        line_to_args_requests: dict[int, List[str]] = {}
 
-        occurrences: dict[int, set[str]] = {}
-        flags_on_line: dict[int, List[str]] = {}
+        def add_option(lineno_1based: int, option_name: str, remove_flag: str) -> None:
+            line_to_opts.setdefault(lineno_1based, set()).add(option_name)
+            line_to_remove_flags.setdefault(lineno_1based, []).append(remove_flag)
 
-        # NOTE: placement is still controlled by ctx.arg_lines (i.e. by flags written in the file)
-        for key, opt in key_to_opt.items():
-            if not ctx.config.get(key):
-                continue
-            line_nums = ctx.arg_lines.get(key)
-            if not line_nums:
-                continue
-            for lineno_1based in line_nums:
-                occurrences.setdefault(lineno_1based, set()).add(opt)
-                flags_on_line.setdefault(lineno_1based, []).append(key_to_flag[key])
+        if ctx.config.get("mods"):
+            for lineno_1based in ctx.arg_lines.get("mods") or []:
+                add_option(int(lineno_1based), "mods", "--mods")
 
-        if not occurrences:
+        if ctx.config.get("config"):
+            for lineno_1based in ctx.arg_lines.get("config") or []:
+                add_option(int(lineno_1based), "config", "--config")
+
+        if ctx.config.get("help"):
+            for lineno_1based in ctx.arg_lines.get("help") or []:
+                add_option(int(lineno_1based), "help", "--help")
+
+        if ctx.config.get("sys_event"):
+            for lineno_1based in ctx.arg_lines.get("sys_event") or []:
+                add_option(int(lineno_1based), "event", "--sys-event")
+
+        args_values = ctx.config.get("args") or []
+        args_lines = ctx.arg_lines.get("args") or []
+        if isinstance(args_values, list) and isinstance(args_lines, list):
+            for args_value, lineno_1based in zip(args_values, args_lines):
+                lineno_int = int(lineno_1based)
+                add_option(lineno_int, "args", "--args")
+                if args_value is not None and str(args_value).strip():
+                    line_to_args_requests.setdefault(lineno_int, []).append(
+                        str(args_value).strip()
+                    )
+
+        if not line_to_opts:
             return None
 
-        sep = str("---").strip()
-        sep_line = sep + ("\n" if not sep.endswith("\n") else "")
-
         try:
-            with open(ctx.path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            with open(ctx.path, "r", encoding="utf-8") as file_handle:
+                file_lines = file_handle.readlines()
         except FileNotFoundError:
-            lines = []
+            file_lines = []
 
-        if not lines:
-            lines = ["\n"]
+        if not file_lines:
+            file_lines = ["\n"]
 
-        min_from_line: int | None = None
+        for lineno_1based in sorted(line_to_opts.keys(), reverse=True):
+            index = max(0, min(len(file_lines) - 1, lineno_1based - 1))
+            selected_opts = line_to_opts[lineno_1based]
+            remove_flags = line_to_remove_flags[lineno_1based]
+            args_requests = line_to_args_requests.get(lineno_1based, [])
 
-        for lineno_1based in sorted(occurrences.keys(), reverse=True):
-            idx = max(0, min(len(lines) - 1, lineno_1based - 1))
-            opts = occurrences[lineno_1based]
-            remove_flags = flags_on_line[lineno_1based]
-
-            block = self._build_block(system=system, ctx=ctx, opts=opts, path=ctx.path)
-
-            if idx == 0:
-                cleaned0 = delete_args_from_string(lines[0], remove_flags)
-
-                # if first line had ONLY sys flags -> replace line 1 with block (no separator, no shifting)
-                if cleaned0.strip() == "":
-                    lines[0:1] = block
-                    min_from_line = (
-                        1 if min_from_line is None else min(min_from_line, 1)
-                    )
-                    continue
-
-                # first-line rule only if something else remains on line 1
-                lines[0] = cleaned0
-
-                if lines[0].strip():
-                    lines.insert(1, "\n")
-                    insert_pos = 2
-                else:
-                    lines[0] = "\n"
-                    insert_pos = 1
-
-                lines[insert_pos:insert_pos] = [sep_line] + block
-
-                start_line = insert_pos + 1  # list index -> 1-based line
-                min_from_line = (
-                    start_line
-                    if min_from_line is None
-                    else min(min_from_line, start_line)
-                )
-
-            else:
-                cleaned = delete_args_from_string(lines[idx], remove_flags)
-
-                lines[idx : idx + 1] = block
-
-                if cleaned.strip():
-                    lines[idx + len(block) : idx + len(block)] = [cleaned]
-
-                start_line = idx + 1
-                min_from_line = (
-                    start_line
-                    if min_from_line is None
-                    else min(min_from_line, start_line)
-                )
-
-        from_line = min_from_line or 1
-
-        if ctx.config.get("sys_slow_print"):
-            return slow_write_lines_from(
-                ctx.path, lines, from_line=from_line, delay=0.1
+            block = self._build_block(
+                system=system,
+                ctx=ctx,
+                selected_opts=selected_opts,
+                path=ctx.path,
+                args_requests=args_requests,
             )
 
-        with open(ctx.path, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+            if index == 0:
+                cleaned_first_line = delete_args_from_string(
+                    file_lines[0], remove_flags
+                )
+                if cleaned_first_line.strip() == "":
+                    file_lines[0:1] = block
+                    continue
+
+                file_lines[0] = cleaned_first_line
+
+                if file_lines[0].strip():
+                    file_lines.insert(1, "\n")
+                    insert_pos = 2
+                else:
+                    file_lines[0] = "\n"
+                    insert_pos = 1
+
+                file_lines[insert_pos:insert_pos] = ["---\n"] + block
+                continue
+
+            cleaned_line = delete_args_from_string(file_lines[index], remove_flags)
+            file_lines[index : index + 1] = block
+            if cleaned_line.strip():
+                insert_at = index + len(block)
+                file_lines[insert_at:insert_at] = [cleaned_line]
+
+        with open(ctx.path, "w", encoding="utf-8") as file_handle:
+            file_handle.writelines(file_lines)
 
         return {ctx.path: 1}
 

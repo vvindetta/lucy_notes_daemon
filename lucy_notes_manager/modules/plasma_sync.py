@@ -606,10 +606,30 @@ class PlasmaSync(AbstractModule):
     priority: int = 30
 
     template: Template = [
-        ("--plasma-notes-dir", str, None),  # REQUIRED
-        ("--plasma-note-id", str, None),  # REQUIRED
-        ("--plasma-bold-note-id", str, None),  # optional
-        ("--todo-file", str, None),  # REQUIRED
+        (
+            "--plasma-notes-dir",
+            str,
+            None,
+            "Directory with Plasma note HTML files (the note 'storage'). Example: --plasma-notes-dir ~/.local/share/plasma_notes",
+        ),
+        (
+            "--plasma-note-id",
+            str,
+            None,
+            "Main Plasma note filename/id inside --plasma-notes-dir. Example: --plasma-note-id 1234567890.html",
+        ),
+        (
+            "--plasma-bold-note-id",
+            str,
+            None,
+            "Optional: separate Plasma note id used as a 'bold-only mirror' (stores only bold fragments). Example: --plasma-bold-note-id bold_123.html",
+        ),
+        (
+            "--todo-file",
+            str,
+            None,
+            "Path to the plain-text TODO file that is synced with the Plasma note(s). Example: --todo-file ~/notes/todo.txt",
+        ),
     ]
 
     def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:

@@ -5,7 +5,7 @@ from typing import Optional
 
 import pyfiglet
 
-from lucy_notes_manager.lib.args import delete_args_from_string
+from lucy_notes_manager.lib.args import Template, delete_args_from_string
 from lucy_notes_manager.modules.abstract_module import (
     AbstractModule,
     Context,
@@ -18,9 +18,21 @@ class Banner(AbstractModule):
     name: str = "banner"
     priority: int = 10
 
-    template = [
-        ("--banner", str, None),
-        ("--banner-separator", str, ["---"]),
+    template: Template = [
+        (
+            "--banner",
+            str,
+            None,
+            "Insert an ASCII banner (pyfiglet) at the line where the flag appears. "
+            "Use '--banner date' to insert today's date. Example: --banner 'LOL' or --banner date.",
+        ),
+        (
+            "--banner-separator",
+            str,
+            ["---"],
+            "Separator line inserted before the banner when the banner is placed at the top of the file. "
+            "Example: --banner-separator '---' (default).",
+        ),
     ]
 
     def _apply(

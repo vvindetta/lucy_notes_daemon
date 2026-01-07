@@ -92,3 +92,6 @@ class FileHandler(FileSystemEventHandler):
 
     def on_deleted(self, event):
         self._process_file(event=event)
+
+    # def on_opened(self, event):
+    #     self._process_file(event=event)

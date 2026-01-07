@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 """
 Template example:
     [
-        ("--rename", str, None),
-        ("--banner", str, ["date"]),
+        ("--rename", str, None, "Will rename file),
+        ("--banner", str, ["date"], "Draws ASCII banner),
     ]
 """
-Template = List[Tuple[str, type, Any]]
+Template = List[Tuple[str, type, Any, str]]
 
 ArgLines = Dict[str, List[int]]
 
@@ -23,7 +23,7 @@ ArgLines = Dict[str, List[int]]
 def parse_args(args: list[str], template: Template) -> tuple[dict[str, Any], list[str]]:
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 
-    for flag, typ, default in template:
+    for flag, typ, default, desc in template:
         dest = flag.lstrip("-").replace("-", "_")
 
         if typ is bool:
@@ -106,13 +106,13 @@ def setup_config_and_cli_args(
     # 2. Parse config-file args
     try:
         known_config_args, unknown_config_args = get_config_args(
-            path=known_startup_args["config_path"],
+            path=known_startup_args["sys_config_path"],
             template=template,
         )
     except FileNotFoundError:
         logging.basicConfig(level=logging.INFO)
         logging.warning(
-            f"Config file {known_startup_args['config_path']} not found, using only startup arguments",
+            f"Config file {known_startup_args['sys_config_path']} not found, using only startup arguments",
         )
         return known_startup_args, unknown_startup_args
 
