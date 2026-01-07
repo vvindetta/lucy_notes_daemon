@@ -29,6 +29,11 @@ Then press ```CTRL+S``` - Lucy will detect the change and run the modules.
 - Rename notes based on rules
 - Write your own module!
 
+
+### KDE Plasma widgets sync module
+[plasma_sync](plasma_sync.mp4)
+
+
 ## How to sync with mobile?
 Use Lucy’s git auto-commit module together with GitSync on Android:
 https://github.com/ViscousPot/GitSync 
