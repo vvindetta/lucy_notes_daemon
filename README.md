@@ -31,7 +31,7 @@ Then press ```CTRL+S``` - Lucy will detect the change and run the modules.
 
 
 ### KDE Plasma widgets sync module
-[plasma_sync](plasma_sync.mp4)
+[Video demonstration](plasma_sync.mp4)
 
 
 ## How to sync with mobile?
