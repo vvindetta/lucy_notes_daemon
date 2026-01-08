@@ -19,8 +19,14 @@ class FileHandler(FileSystemEventHandler):
         self._ignore_paths: Dict[str, int] = {}
         self.modules = modules
 
+        # on_opened throttle (per file)
         self._open_cooldown_seconds = float(open_cooldown_seconds)
         self._last_open_ts: Dict[str, float] = {}
+
+        # cleanup: every 200 opened events, remove 100 oldest entries
+        self._cleanup_every_open_events = 200
+        self._cleanup_remove_count = 100
+        self._opened_events_seen = 0
 
     def _process_file(self, event):
         if event.is_directory or os.path.basename(event.src_path).startswith("."):
@@ -78,18 +84,43 @@ class FileHandler(FileSystemEventHandler):
         self._ignore_paths[abs_path] = new
         return new
 
+    def _cleanup_open_cache_oldest_n(self) -> None:
+        """
+        Remove N oldest entries from _last_open_ts (based on timestamp value).
+        This bounds memory growth even if many unique temp files appear.
+        """
+        if not self._last_open_ts:
+            return
+
+        n = min(self._cleanup_remove_count, len(self._last_open_ts))
+        # sort by last open time (oldest first)
+        oldest = sorted(self._last_open_ts.items(), key=lambda kv: kv[1])[:n]
+        for path, _ts in oldest:
+            del self._last_open_ts[path]
+
+        logger.info(
+            "OPEN CACHE CLEANUP: removed=%d remaining=%d",
+            n,
+            len(self._last_open_ts),
+        )
+
     def _should_process_open(self, file_path: str) -> bool:
         """
         Per-file throttle for 'opened' events.
-        Returns True if we should process; False if we should ignore.
+        Cleanup rule: every 200 opened events -> remove 100 oldest cache entries.
         """
         if self._open_cooldown_seconds <= 0:
             return True
 
         abs_path = self._abs(file_path)
         now = time.monotonic()
-        last = self._last_open_ts.get(abs_path, 0.0)
 
+        # cleanup trigger: every 200 opened events
+        self._opened_events_seen += 1
+        if self._opened_events_seen % self._cleanup_every_open_events == 0:
+            self._cleanup_open_cache_oldest_n()
+
+        last = self._last_open_ts.get(abs_path, 0.0)
         if (now - last) < self._open_cooldown_seconds:
             return False
 
@@ -114,5 +145,4 @@ class FileHandler(FileSystemEventHandler):
     def on_opened(self, event):
         if not self._should_process_open(file_path=str(event.src_path)):
             return
-
         self._process_file(event=event)
