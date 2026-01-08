@@ -607,28 +607,22 @@ class PlasmaSync(AbstractModule):
 
     template: Template = [
         (
-            "--plasma-notes-dir",
+            "--plasma-widget-path",
             str,
             None,
-            "Directory with Plasma note HTML files (the note 'storage'). Example: --plasma-notes-dir ~/.local/share/plasma_notes",
+            "Path to the main Plasma note HTML file (widget file). Example: --plasma-widget-path ~/.local/share/plasma_notes/1234567890.html",
         ),
         (
-            "--plasma-note-id",
+            "--plasma-bold-widget-path",
             str,
             None,
-            "Main Plasma note filename/id inside --plasma-notes-dir. Example: --plasma-note-id 1234567890.html",
+            "Optional: path to a separate Plasma widget HTML file used as a 'bold-only mirror' (stores only bold fragments). Example: --plasma-bold-widget-path ~/.local/share/plasma_notes/bold_123.html",
         ),
         (
-            "--plasma-bold-note-id",
+            "--plasma-markdown-note-path",
             str,
             None,
-            "Optional: separate Plasma note id used as a 'bold-only mirror' (stores only bold fragments). Example: --plasma-bold-note-id bold_123.html",
-        ),
-        (
-            "--todo-file",
-            str,
-            None,
-            "Path to the plain-text TODO file that is synced with the Plasma note(s). Example: --todo-file ~/notes/todo.txt",
+            "Path to the plain-text Markdown note that is synced with the Plasma widget(s). Example: --plasma-markdown-note-path ~/notes/todo.md",
         ),
     ]
 
@@ -644,95 +638,74 @@ class PlasmaSync(AbstractModule):
     def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def _cfg(self, ctx: Context) -> tuple[str, str, str, Optional[str]]:
+    def _cfg(self, ctx: Context) -> tuple[str, str, Optional[str]]:
         cfg = ctx.config  # trust parse_args shape
 
-        if cfg["plasma_notes_dir"] is None:
-            raise ValueError("PlasmaSync: missing required --plasma-notes-dir")
-        if cfg["todo_file"] is None:
-            raise ValueError("PlasmaSync: missing required --todo-file")
-        if cfg["plasma_note_id"] is None:
-            raise ValueError("PlasmaSync: missing required --plasma-note-id")
+        def one_value(key: str, flag: str, required: bool) -> Optional[str]:
+            val = cfg.get(key)
+            if val is None:
+                if required:
+                    raise ValueError(f"PlasmaSync: missing required {flag}")
+                return None
 
-        plasma_dir = os.path.abspath(os.path.expanduser(cfg["plasma_notes_dir"][0]))
-        todo_file = os.path.abspath(os.path.expanduser(cfg["todo_file"][0]))
-        note_id = cfg["plasma_note_id"][0]
-        bold_note_id = (
-            cfg["plasma_bold_note_id"][0]
-            if cfg["plasma_bold_note_id"] is not None
-            else None
+            # Old parse_args may still give a list; do NOT "take first" silently.
+            if isinstance(val, list):
+                if len(val) != 1:
+                    raise ValueError(
+                        f"PlasmaSync: {flag} expects exactly one value, got {len(val)}"
+                    )
+                val = val[0]
+
+            if not isinstance(val, str) or not val.strip():
+                raise ValueError(f"PlasmaSync: invalid value for {flag}")
+
+            return os.path.abspath(os.path.expanduser(val))
+
+        widget_path = one_value("plasma_widget_path", "--plasma-widget-path", True)
+        markdown_path = one_value(
+            "plasma_markdown_note_path", "--plasma-markdown-note-path", True
+        )
+        bold_widget_path = one_value(
+            "plasma_bold_widget_path", "--plasma-bold-widget-path", False
         )
 
-        return plasma_dir, todo_file, note_id, bold_note_id
-
-    def _ensure_primary_note(self, plasma_dir: str, note_id: str) -> str:
-        try:
-            os.makedirs(plasma_dir, exist_ok=True)
-        except Exception as e:
-            logger.error("Failed to create plasma dir %s: %s", plasma_dir, e)
-            safe_notify(
-                "mk_plasma:" + plasma_dir,
-                f"Failed to create directory:\n{plasma_dir}\n\n{e}",
-            )
-        return os.path.join(plasma_dir, note_id)
-
-    def _bold_note_path(
-        self, plasma_dir: str, bold_note_id: Optional[str]
-    ) -> Optional[str]:
-        if not bold_note_id:
-            return None
-        try:
-            os.makedirs(plasma_dir, exist_ok=True)
-        except Exception as e:
-            logger.error("Failed to create plasma dir %s: %s", plasma_dir, e)
-            safe_notify(
-                "mk_plasma:" + plasma_dir,
-                f"Failed to create directory:\n{plasma_dir}\n\n{e}",
-            )
-        return os.path.join(plasma_dir, bold_note_id)
+        # mypy: widget_path/markdown_path are required so they are not None here
+        return widget_path or "", markdown_path or "", bold_widget_path
 
     def _handle(self, ctx: Context) -> Optional[IgnoreMap]:
-        plasma_dir, todo_file, note_id, bold_note_id = self._cfg(ctx)
+        widget_path, markdown_path, bold_widget_path = self._cfg(ctx)
 
         path = os.path.abspath(ctx.path)
-        todo_abs = os.path.abspath(todo_file)
+        widget_abs = os.path.abspath(widget_path)
+        md_abs = os.path.abspath(markdown_path)
+        bold_abs = (
+            os.path.abspath(bold_widget_path) if bold_widget_path is not None else None
+        )
 
-        main_path = os.path.abspath(self._ensure_primary_note(plasma_dir, note_id))
-        bp = self._bold_note_path(plasma_dir, bold_note_id)
-        bold_path = os.path.abspath(bp) if bp is not None else None
+        if path == md_abs:
+            return self._from_markdown(markdown_path, widget_path, bold_widget_path)
 
-        if path == todo_abs:
-            return self._from_todo(plasma_dir, todo_file, note_id, bold_note_id)
+        if bold_abs and path == bold_abs:
+            return self._from_bold_mirror(widget_path, markdown_path, bold_widget_path)
 
-        try:
-            in_plasma = os.path.commonpath([path, plasma_dir]) == plasma_dir
-        except ValueError:
-            in_plasma = False
-
-        if not in_plasma:
-            return None
-
-        if bold_path and path == bold_path:
-            return self._from_bold_mirror(plasma_dir, todo_file, note_id, bold_note_id)
-
-        if path == main_path:
+        if path == widget_abs:
             return self._from_main_plasma(
-                plasma_dir, todo_file, note_id, bold_note_id, html_path=path
+                widget_path, markdown_path, bold_widget_path, html_path=path
             )
 
-        return self._from_other_plasma(plasma_dir, todo_file, note_id, html_path=path)
+        return None
 
-    def _from_todo(
+    def _from_markdown(
         self,
-        plasma_dir: str,
-        todo_file: str,
-        note_id: str,
-        bold_note_id: Optional[str],
+        markdown_path: str,
+        widget_path: str,
+        bold_widget_path: Optional[str],
     ) -> Optional[IgnoreMap]:
-        text_raw = _read_file(todo_file)
-        if text_raw == "" and not os.path.exists(todo_file):
+        text_raw = _read_file(markdown_path)
+        if text_raw == "" and not os.path.exists(markdown_path):
             safe_notify(
-                "todo_missing:" + todo_file, f"TODO file not found:\n{todo_file}"
+                "md_missing:" + markdown_path,
+                f"Markdown note file not found:\n{markdown_path}",
             )
             return None
 
@@ -743,35 +716,33 @@ class PlasmaSync(AbstractModule):
 
         ignore: IgnoreMap = {}
 
-        main_path = self._ensure_primary_note(plasma_dir, note_id)
         html_new = _text_to_plasma_html(_CURRENT_TEXT)
+        if _write_if_changed(widget_path, html_new):
+            _inc_ignore(ignore, widget_path, 1)
 
-        if _write_if_changed(main_path, html_new):
-            _inc_ignore(ignore, main_path, 1)
-
-        bold_path = self._bold_note_path(plasma_dir, bold_note_id)
-        if bold_path:
+        if bold_widget_path:
             global _MAIN_BOLD_HASH
             _MAIN_BOLD_HASH = _items_hash([])
-            if _write_if_changed(bold_path, _bold_items_to_plasma_html([])):
-                _inc_ignore(ignore, bold_path, 1)
+            if _write_if_changed(bold_widget_path, _bold_items_to_plasma_html([])):
+                _inc_ignore(ignore, bold_widget_path, 1)
 
         if ignore:
             logger.info(
-                "Sync TODO -> Plasma: %s -> %s", todo_file, os.path.abspath(main_path)
+                "Sync Markdown -> Plasma: %s -> %s",
+                os.path.abspath(markdown_path),
+                os.path.abspath(widget_path),
             )
         return ignore or None
 
     def _from_main_plasma(
         self,
-        plasma_dir: str,
-        todo_file: str,
-        note_id: str,
-        bold_note_id: Optional[str],
+        widget_path: str,
+        markdown_path: str,
+        bold_widget_path: Optional[str],
         html_path: str,
     ) -> Optional[IgnoreMap]:
         if not os.path.exists(html_path):
-            logger.debug("Plasma html not found (ignored): %s", html_path)
+            logger.debug("Plasma widget html not found (ignored): %s", html_path)
             return None
 
         html_raw = _read_file(html_path)
@@ -782,47 +753,45 @@ class PlasmaSync(AbstractModule):
         ignore: IgnoreMap = {}
 
         if text_changed and _CURRENT_TEXT is not None:
-            if _write_if_changed(todo_file, _CURRENT_TEXT):
-                _inc_ignore(ignore, todo_file, 1)
+            if _write_if_changed(markdown_path, _CURRENT_TEXT):
+                _inc_ignore(ignore, markdown_path, 1)
 
-            if not bold_note_id:
+            # If no bold mirror is used, normalize the main widget HTML too.
+            if not bold_widget_path:
                 html_new = _text_to_plasma_html(_CURRENT_TEXT)
                 if _write_if_changed(html_path, html_new):
                     _inc_ignore(ignore, html_path, 1)
 
-        if bold_note_id:
+        if bold_widget_path:
             bold_items = _extract_bold_items_from_html(html_raw)
             new_bold_hash = _items_hash(bold_items)
 
             global _MAIN_BOLD_HASH
             if _MAIN_BOLD_HASH != new_bold_hash:
                 _MAIN_BOLD_HASH = new_bold_hash
-                bold_path = self._bold_note_path(plasma_dir, bold_note_id)
-                if bold_path and _write_if_changed(
-                    bold_path, _bold_items_to_plasma_html(bold_items)
+                if _write_if_changed(
+                    bold_widget_path, _bold_items_to_plasma_html(bold_items)
                 ):
-                    _inc_ignore(ignore, bold_path, 1)
+                    _inc_ignore(ignore, bold_widget_path, 1)
 
         if ignore:
-            logger.info("Sync MAIN Plasma -> TODO")
+            logger.info("Sync MAIN Plasma -> Markdown")
         return ignore or None
 
     def _from_bold_mirror(
         self,
-        plasma_dir: str,
-        todo_file: str,
-        note_id: str,
-        bold_note_id: Optional[str],
+        widget_path: str,
+        markdown_path: str,
+        bold_widget_path: Optional[str],
     ) -> Optional[IgnoreMap]:
-        if not bold_note_id:
+        if not bold_widget_path:
             return None
 
-        bold_path = self._bold_note_path(plasma_dir, bold_note_id)
-        if not bold_path or not os.path.exists(bold_path):
-            logger.debug("Bold mirror not found (ignored): %s", bold_path)
+        if not os.path.exists(bold_widget_path):
+            logger.debug("Bold mirror not found (ignored): %s", bold_widget_path)
             return None
 
-        bold_html_raw = _read_file(bold_path)
+        bold_html_raw = _read_file(bold_widget_path)
 
         bold_text = _html_to_text(bold_html_raw)
         items = [ln.strip() for ln in bold_text.splitlines() if ln.strip()]
@@ -833,8 +802,7 @@ class PlasmaSync(AbstractModule):
             return None
         _BOLD_NOTE_ITEMS_HASH = items_h
 
-        main_path = self._ensure_primary_note(plasma_dir, note_id)
-        main_html_raw = _read_file(main_path)
+        main_html_raw = _read_file(widget_path)
 
         main_lines = _plasma_html_to_boldaware_lines(main_html_raw)
         new_lines = _replace_bold_items_in_lines(main_lines, items)
@@ -842,52 +810,21 @@ class PlasmaSync(AbstractModule):
 
         ignore: IgnoreMap = {}
 
-        if _write_if_changed(main_path, new_main_html):
-            _inc_ignore(ignore, main_path, 1)
+        if _write_if_changed(widget_path, new_main_html):
+            _inc_ignore(ignore, widget_path, 1)
 
         new_plain = _html_to_text(new_main_html)
         if _update_state_from_text(new_plain) and _CURRENT_TEXT is not None:
-            if _write_if_changed(todo_file, _CURRENT_TEXT):
-                _inc_ignore(ignore, todo_file, 1)
+            if _write_if_changed(markdown_path, _CURRENT_TEXT):
+                _inc_ignore(ignore, markdown_path, 1)
 
-        if _write_if_changed(bold_path, _bold_items_to_plasma_html(items)):
-            _inc_ignore(ignore, bold_path, 1)
+        # Keep bold mirror normalized too
+        if _write_if_changed(bold_widget_path, _bold_items_to_plasma_html(items)):
+            _inc_ignore(ignore, bold_widget_path, 1)
 
         _MAIN_BOLD_HASH = _items_hash(items)
 
         if ignore:
-            logger.info("Sync BOLD mirror -> MAIN -> TODO")
+            logger.info("Sync BOLD mirror -> MAIN -> Markdown")
 
-        return ignore or None
-
-    def _from_other_plasma(
-        self,
-        plasma_dir: str,
-        todo_file: str,
-        note_id: str,
-        html_path: str,
-    ) -> Optional[IgnoreMap]:
-        if not os.path.exists(html_path):
-            logger.debug("Plasma html not found (ignored): %s", html_path)
-            return None
-
-        html_raw = _read_file(html_path)
-        text_from_html = _html_to_text(html_raw)
-
-        if not _update_state_from_text(text_from_html):
-            return None
-        if _CURRENT_TEXT is None:
-            return None
-
-        ignore: IgnoreMap = {}
-
-        if _write_if_changed(todo_file, _CURRENT_TEXT):
-            _inc_ignore(ignore, todo_file, 1)
-
-        html_new = _text_to_plasma_html(_CURRENT_TEXT)
-        if _write_if_changed(html_path, html_new):
-            _inc_ignore(ignore, html_path, 1)
-
-        if ignore:
-            logger.info("Sync Plasma -> TODO: %s -> %s", html_path, todo_file)
         return ignore or None
