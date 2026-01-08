@@ -40,6 +40,12 @@ TEMPLATE_STARTUP_ARGS: Template = [
         None,
         "One or more directories to watch recursively. Example: --sys-notes_dirs ~/notes ~/work/notes",
     ),
+    (
+        "--sys-on-open-cooldown",
+        int,
+        1800,
+        "Cooldown for 'on_opened' events per file, in seconds. Prevents editor spam. Default: 1800 (30 minutes).",
+    ),
 ]
 
 MODULES: List[AbstractModule] = [
@@ -71,7 +77,10 @@ observer = Observer()
 
 for path in config["sys_notes_dirs"]:
     observer.schedule(
-        FileHandler(modules=modules),
+        FileHandler(
+            modules=modules,
+            open_cooldown_seconds=config["sys_on_open_cooldown"],
+        ),
         path=path,
         recursive=True,
     )

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from typing import Dict
 
 from watchdog.events import FileSystemEventHandler
@@ -13,17 +14,21 @@ class FileHandler(FileSystemEventHandler):
     def __init__(
         self,
         modules: ModuleManager,
+        open_cooldown_seconds: int,
     ):
         self._ignore_paths: Dict[str, int] = {}
         self.modules = modules
+
+        self._open_cooldown_seconds = float(open_cooldown_seconds)
+        self._last_open_ts: Dict[str, float] = {}
 
     def _process_file(self, event):
         if event.is_directory or os.path.basename(event.src_path).startswith("."):
             return
 
         file_path = event.dest_path if event.event_type == "moved" else event.src_path
-
         file_path = os.path.abspath(file_path)
+
         if any(part == ".git" for part in file_path.split(os.sep)):
             return
 
@@ -61,11 +66,6 @@ class FileHandler(FileSystemEventHandler):
         return True
 
     def _bump_ignore(self, path: str, delta: int) -> int:
-        """
-        Apply +delta (can be negative) to ignore counter for path.
-        Removes key when counter reaches 0.
-        Returns new counter value (0 if removed).
-        """
         abs_path = self._abs(path)
         cur = self._ignore_paths.get(abs_path, 0)
         new = cur + int(delta)
@@ -77,6 +77,24 @@ class FileHandler(FileSystemEventHandler):
 
         self._ignore_paths[abs_path] = new
         return new
+
+    def _should_process_open(self, file_path: str) -> bool:
+        """
+        Per-file throttle for 'opened' events.
+        Returns True if we should process; False if we should ignore.
+        """
+        if self._open_cooldown_seconds <= 0:
+            return True
+
+        abs_path = self._abs(file_path)
+        now = time.monotonic()
+        last = self._last_open_ts.get(abs_path, 0.0)
+
+        if (now - last) < self._open_cooldown_seconds:
+            return False
+
+        self._last_open_ts[abs_path] = now
+        return True
 
     def _abs(self, p: str) -> str:
         return os.path.abspath(p)
@@ -93,5 +111,8 @@ class FileHandler(FileSystemEventHandler):
     def on_deleted(self, event):
         self._process_file(event=event)
 
-    # def on_opened(self, event):
-    #     self._process_file(event=event)
+    def on_opened(self, event):
+        if not self._should_process_open(file_path=str(event.src_path)):
+            return
+
+        self._process_file(event=event)

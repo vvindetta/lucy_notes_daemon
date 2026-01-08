@@ -61,12 +61,12 @@ class AbstractModule(ABC):
 
     Template:
     - 'template': flags this module adds to the global argument template.
-        Default can be setup.
 
     - example:
         [
-            ("--command", str, None),
-            ("--some-command", int, ["date"]),
+            ("--flag", type, ["default value"], "manual string"),
+            ("--rename", str, None, "Will rename file),
+            ("--banner", str, ["date"], "Draws ASCII banner),
         ]
     """
 
