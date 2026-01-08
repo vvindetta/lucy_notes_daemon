@@ -106,7 +106,7 @@ def setup_config_and_cli_args(
     # 2. Parse config-file args
     try:
         known_config_args, unknown_config_args = get_config_args(
-            path=known_startup_args["sys_config_path"],
+            path=known_startup_args["sys_config_path"][0],
             template=template,
         )
     except FileNotFoundError:

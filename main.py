@@ -65,7 +65,7 @@ logging.basicConfig(
 )
 
 if not config.get("sys_notes_dirs"):
-    raise ValueError("No --sys-notes_dirs was setuped")
+    raise ValueError("No --sys-notes-dirs was setuped")
 
 observer = Observer()
 

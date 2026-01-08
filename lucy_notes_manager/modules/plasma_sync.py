@@ -602,7 +602,7 @@ def _boldaware_lines_to_plasma_html(lines: List[List[Tuple[str, bool]]]) -> str:
 
 
 class PlasmaSync(AbstractModule):
-    name: str = "plasma_notes_sync"
+    name: str = "plasma_sync"
     priority: int = 30
 
     template: Template = [
