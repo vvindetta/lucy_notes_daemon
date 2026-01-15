@@ -33,7 +33,7 @@ class FileHandler(FileSystemEventHandler):
             return
 
         file_path = event.dest_path if event.event_type == "moved" else event.src_path
-        file_path = os.path.abspath(file_path)
+        file_path = self._abs(file_path)
 
         if any(part == ".git" for part in file_path.split(os.sep)):
             return
@@ -85,15 +85,10 @@ class FileHandler(FileSystemEventHandler):
         return new
 
     def _cleanup_open_cache_oldest_n(self) -> None:
-        """
-        Remove N oldest entries from _last_open_ts (based on timestamp value).
-        This bounds memory growth even if many unique temp files appear.
-        """
         if not self._last_open_ts:
             return
 
         n = min(self._cleanup_remove_count, len(self._last_open_ts))
-        # sort by last open time (oldest first)
         oldest = sorted(self._last_open_ts.items(), key=lambda kv: kv[1])[:n]
         for path, _ts in oldest:
             del self._last_open_ts[path]
@@ -105,17 +100,12 @@ class FileHandler(FileSystemEventHandler):
         )
 
     def _should_process_open(self, file_path: str) -> bool:
-        """
-        Per-file throttle for 'opened' events.
-        Cleanup rule: every 200 opened events -> remove 100 oldest cache entries.
-        """
         if self._open_cooldown_seconds <= 0:
             return True
 
         abs_path = self._abs(file_path)
         now = time.monotonic()
 
-        # cleanup trigger: every 200 opened events
         self._opened_events_seen += 1
         if self._opened_events_seen % self._cleanup_every_open_events == 0:
             self._cleanup_open_cache_oldest_n()
@@ -128,7 +118,19 @@ class FileHandler(FileSystemEventHandler):
         return True
 
     def _abs(self, p: str) -> str:
-        return os.path.abspath(p)
+        """
+        Canonical path for ignore-map keys and event paths.
+        This fixes mismatches after reboot / different path forms:
+        - expands ~
+        - removes .. and .
+        - converts to absolute
+        - resolves symlinks (realpath)
+        """
+        p = os.path.expanduser(p)
+        p = os.path.normpath(p)
+        p = os.path.abspath(p)
+        p = os.path.realpath(p)
+        return p
 
     def on_modified(self, event):
         self._process_file(event=event)
