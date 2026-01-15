@@ -40,8 +40,8 @@ class FileHandler(FileSystemEventHandler):
 
         if event.event_type == "moved":
             if self._check_and_delete_ignore(
-                event.src_path
-            ) or self._check_and_delete_ignore(event.dest_path):
+                self._abs(event.src_path)
+            ) or self._check_and_delete_ignore(self._abs(event.dest_path)):
                 return
             logger.info(f"EVENT: Moved: {event.src_path} → {event.dest_path}")
         else:
