@@ -18,11 +18,20 @@ IgnoreMap = Dict[str, int]
 _CURRENT_TEXT: Optional[str] = None
 _CURRENT_HASH: Optional[str] = None
 
+# bold state hashes
 _MAIN_BOLD_HASH: Optional[str] = None
 _BOLD_NOTE_ITEMS_HASH: Optional[str] = None
 
+# one-time init guard
+_INIT_DONE: bool = False
+
 
 # ---------------- IO ---------------- #
+
+
+def _rpath(p: str) -> str:
+    """Absolute + realpath to avoid symlink differences across reboot / watchdog."""
+    return os.path.realpath(os.path.abspath(os.path.expanduser(p)))
 
 
 def _read_file(path: str) -> str:
@@ -43,7 +52,7 @@ def _read_file(path: str) -> str:
 
 
 def _write_if_changed(path: str, content: str) -> bool:
-    path = os.path.abspath(path)
+    path = _rpath(path)
     old = _read_file(path)
     if old == content:
         return False
@@ -64,7 +73,7 @@ def _write_if_changed(path: str, content: str) -> bool:
 
 
 def _inc_ignore(ignore: IgnoreMap, path: str, times: int = 1) -> None:
-    ap = os.path.abspath(path)
+    ap = _rpath(path)
     ignore[ap] = ignore.get(ap, 0) + int(times)
 
 
@@ -81,7 +90,9 @@ def _normalize_text(text: str) -> str:
     - stable newlines
     - trim leading/trailing blank lines
     - collapse multiple blank lines to at most 1
-    - keep tight formatting around lists (no blank between '-' items or after ':' before list)
+    - keep tight formatting around lists:
+      no blank between '-' items
+      no blank after ':' before list
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.splitlines()
@@ -148,7 +159,7 @@ def _update_state_from_text(text: str) -> bool:
 
 class _PlasmaHTMLParser(HTMLParser):
     """
-    IMPORTANT FIX:
+    IMPORTANT:
     HTMLParser emits handle_data() for whitespace between tags.
     Plasma HTML has newlines between <p>...</p> blocks,
     and we must NOT treat those as user content.
@@ -172,7 +183,6 @@ class _PlasmaHTMLParser(HTMLParser):
             return
 
         if tag in ("p", "li"):
-            # close previous block if still open
             if self._current is not None and self._in_block:
                 self._lines.append(self._current)
             self._current = ""
@@ -214,12 +224,11 @@ class _PlasmaHTMLParser(HTMLParser):
         if not isinstance(data, str):
             return
 
-        # CRITICAL: ignore whitespace-only text nodes between tags
+        # ignore whitespace-only text nodes BETWEEN blocks
         if not self._in_block and data.strip() == "":
             return
 
         if self._current is None:
-            # Only start collecting if it has real content
             if data.strip() == "":
                 return
             self._current = ""
@@ -295,14 +304,14 @@ def _style_is_bold(style: str) -> bool:
 
 class _PlasmaBoldAwareParser(HTMLParser):
     """
-    Same whitespace-between-tags problem exists here too.
-    We must ignore whitespace-only data outside block tags.
+    Produces lines as list of (text, is_bold) tuples.
+    Ignores whitespace-only data outside block tags.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._in_body = False
-        self._in_block = False  # inside <p>/<li>/<font> etc.
+        self._in_block = False
         self._bold_depth = 0
         self._span_bold_stack: List[bool] = []
         self._tag_style_bold: Dict[str, List[bool]] = {"p": [], "li": [], "font": []}
@@ -442,6 +451,12 @@ class _PlasmaBoldAwareParser(HTMLParser):
         return out
 
 
+def _plasma_html_to_boldaware_lines(html_src: str) -> List[List[Tuple[str, bool]]]:
+    p = _PlasmaBoldAwareParser()
+    p.feed(html_src)
+    return p.get_lines()
+
+
 def _extract_bold_items_from_html(html_src: str) -> List[str]:
     p = _PlasmaBoldAwareParser()
     p.feed(html_src)
@@ -449,23 +464,22 @@ def _extract_bold_items_from_html(html_src: str) -> List[str]:
 
     items: List[str] = []
     for line in lines:
-        buf: List[str] = []
+        # Extract each bold RUN as one item
+        cur: List[str] = []
         in_bold = False
         for t, b in line:
             if b:
-                if not in_bold:
-                    buf = []
-                    in_bold = True
-                buf.append(t)
+                in_bold = True
+                cur.append(t)
             else:
                 if in_bold:
-                    s = "".join(buf).strip()
+                    s = "".join(cur).strip()
                     if s:
                         items.append(s)
-                    buf = []
+                    cur = []
                     in_bold = False
         if in_bold:
-            s = "".join(buf).strip()
+            s = "".join(cur).strip()
             if s:
                 items.append(s)
 
@@ -512,16 +526,15 @@ def _bold_items_to_plasma_html(items: List[str]) -> str:
     return header + "".join(parts) + "</body></html>\n"
 
 
-def _plasma_html_to_boldaware_lines(html_src: str) -> List[List[Tuple[str, bool]]]:
-    p = _PlasmaBoldAwareParser()
-    p.feed(html_src)
-    return p.get_lines()
-
-
-def _replace_bold_items_in_lines(
+def _replace_bold_runs_in_lines(
     main_lines: List[List[Tuple[str, bool]]],
     new_items: List[str],
 ) -> List[List[Tuple[str, bool]]]:
+    """
+    Replace each bold RUN with next item from new_items.
+    If items are fewer: original run becomes normal text (unbold).
+    If items are more: append extra bold lines at the end.
+    """
     items = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in new_items]
     items = [it for it in items if it]
 
@@ -538,12 +551,19 @@ def _replace_bold_items_in_lines(
                 i += 1
                 continue
 
+            # We are at start (or inside) a bold run: consume whole run
+            # Detect run start: if previous tuple is not bold
+            run_text_parts: List[str] = []
+            while i < len(line) and line[i][1] is True:
+                run_text_parts.append(line[i][0])
+                i += 1
+
             if k < len(items):
                 new_line.append((items[k], True))
                 k += 1
             else:
-                new_line.append((t, False))
-            i += 1
+                # no replacement item left -> keep content but remove bold
+                new_line.append(("".join(run_text_parts), False))
 
         out.append(new_line)
 
@@ -598,6 +618,67 @@ def _boldaware_lines_to_plasma_html(lines: List[List[Tuple[str, bool]]]) -> str:
     return header + "".join(parts) + "</body></html>\n"
 
 
+# ---------------- Startup init (cold-start fix) ---------------- #
+
+
+def _init_from_disk_once(
+    widget_path: str, markdown_path: str, bold_widget_path: Optional[str]
+) -> None:
+    """
+    On reboot you had to "touch bold mirror" once.
+    This function makes state consistent immediately by reading current files.
+    """
+    global _INIT_DONE, _MAIN_BOLD_HASH, _BOLD_NOTE_ITEMS_HASH, _CURRENT_TEXT, _CURRENT_HASH
+
+    if _INIT_DONE:
+        return
+    _INIT_DONE = True
+
+    widget_path = _rpath(widget_path)
+    markdown_path = _rpath(markdown_path)
+    bold_widget_path = _rpath(bold_widget_path) if bold_widget_path else None
+
+    # initialize current text hash from whichever exists
+    main_html = _read_file(widget_path)
+    if main_html:
+        main_text = _html_to_text(main_html)
+        _update_state_from_text(main_text)
+    else:
+        md_text = _read_file(markdown_path)
+        if md_text:
+            _update_state_from_text(md_text)
+
+    # init main bold hash from main widget
+    try:
+        if main_html:
+            items = _extract_bold_items_from_html(main_html)
+            _MAIN_BOLD_HASH = _items_hash(items)
+        else:
+            _MAIN_BOLD_HASH = _items_hash([])
+    except Exception:
+        _MAIN_BOLD_HASH = _items_hash([])
+
+    # init mirror hash from mirror file
+    if bold_widget_path:
+        try:
+            bh = _read_file(bold_widget_path)
+            if bh:
+                bt = _html_to_text(bh)
+                its = [ln.strip() for ln in bt.splitlines() if ln.strip()]
+                _BOLD_NOTE_ITEMS_HASH = _items_hash(its)
+            else:
+                _BOLD_NOTE_ITEMS_HASH = _items_hash([])
+        except Exception:
+            _BOLD_NOTE_ITEMS_HASH = _items_hash([])
+
+    logger.info(
+        "PlasmaSync init: current=%s main_bold=%s mirror_bold=%s",
+        "set" if _CURRENT_HASH else "none",
+        "set" if _MAIN_BOLD_HASH else "none",
+        "set" if _BOLD_NOTE_ITEMS_HASH else "none",
+    )
+
+
 # ---------------- Module ---------------- #
 
 
@@ -610,13 +691,13 @@ class PlasmaSync(AbstractModule):
             "--plasma-widget-path",
             str,
             None,
-            "Path to the main Plasma note HTML file (widget file). Example: --plasma-widget-path ~/.local/share/plasma_notes/1234567890.html",
+            "Path to the main Plasma note HTML file (widget file). Example: --plasma-widget-path ~/.local/share/plasma_notes/123.html",
         ),
         (
             "--plasma-bold-widget-path",
             str,
             None,
-            "Optional: path to a separate Plasma widget HTML file used as a 'bold-only mirror' (stores only bold fragments). Example: --plasma-bold-widget-path ~/.local/share/plasma_notes/bold_123.html",
+            "Optional: path to a separate Plasma widget HTML file used as a 'bold-only mirror'. Example: --plasma-bold-widget-path ~/.local/share/plasma_notes/bold_123.html",
         ),
         (
             "--plasma-markdown-note-path",
@@ -648,7 +729,6 @@ class PlasmaSync(AbstractModule):
                     raise ValueError(f"PlasmaSync: missing required {flag}")
                 return None
 
-            # Old parse_args may still give a list; do NOT "take first" silently.
             if isinstance(val, list):
                 if len(val) != 1:
                     raise ValueError(
@@ -659,7 +739,7 @@ class PlasmaSync(AbstractModule):
             if not isinstance(val, str) or not val.strip():
                 raise ValueError(f"PlasmaSync: invalid value for {flag}")
 
-            return os.path.abspath(os.path.expanduser(val))
+            return _rpath(val)
 
         widget_path = one_value("plasma_widget_path", "--plasma-widget-path", True)
         markdown_path = one_value(
@@ -669,18 +749,18 @@ class PlasmaSync(AbstractModule):
             "plasma_bold_widget_path", "--plasma-bold-widget-path", False
         )
 
-        # mypy: widget_path/markdown_path are required so they are not None here
         return widget_path or "", markdown_path or "", bold_widget_path
 
     def _handle(self, ctx: Context) -> Optional[IgnoreMap]:
         widget_path, markdown_path, bold_widget_path = self._cfg(ctx)
 
-        path = os.path.abspath(ctx.path)
-        widget_abs = os.path.abspath(widget_path)
-        md_abs = os.path.abspath(markdown_path)
-        bold_abs = (
-            os.path.abspath(bold_widget_path) if bold_widget_path is not None else None
-        )
+        # cold-start fix
+        _init_from_disk_once(widget_path, markdown_path, bold_widget_path)
+
+        path = _rpath(ctx.path)
+        widget_abs = _rpath(widget_path)
+        md_abs = _rpath(markdown_path)
+        bold_abs = _rpath(bold_widget_path) if bold_widget_path else None
 
         if path == md_abs:
             return self._from_markdown(markdown_path, widget_path, bold_widget_path)
@@ -720,17 +800,19 @@ class PlasmaSync(AbstractModule):
         if _write_if_changed(widget_path, html_new):
             _inc_ignore(ignore, widget_path, 1)
 
+        # Markdown doesn't preserve bold, so mirror becomes empty
         if bold_widget_path:
-            global _MAIN_BOLD_HASH
+            global _MAIN_BOLD_HASH, _BOLD_NOTE_ITEMS_HASH
             _MAIN_BOLD_HASH = _items_hash([])
+            _BOLD_NOTE_ITEMS_HASH = _items_hash([])
             if _write_if_changed(bold_widget_path, _bold_items_to_plasma_html([])):
                 _inc_ignore(ignore, bold_widget_path, 1)
 
         if ignore:
             logger.info(
                 "Sync Markdown -> Plasma: %s -> %s",
-                os.path.abspath(markdown_path),
-                os.path.abspath(widget_path),
+                _rpath(markdown_path),
+                _rpath(widget_path),
             )
         return ignore or None
 
@@ -749,30 +831,38 @@ class PlasmaSync(AbstractModule):
         text_from_html = _html_to_text(html_raw)
 
         text_changed = _update_state_from_text(text_from_html)
-
         ignore: IgnoreMap = {}
 
+        # MAIN -> Markdown (and normalize main if no mirror)
         if text_changed and _CURRENT_TEXT is not None:
             if _write_if_changed(markdown_path, _CURRENT_TEXT):
                 _inc_ignore(ignore, markdown_path, 1)
 
-            # If no bold mirror is used, normalize the main widget HTML too.
             if not bold_widget_path:
                 html_new = _text_to_plasma_html(_CURRENT_TEXT)
                 if _write_if_changed(html_path, html_new):
                     _inc_ignore(ignore, html_path, 1)
 
+        # MAIN -> bold mirror
         if bold_widget_path:
             bold_items = _extract_bold_items_from_html(html_raw)
             new_bold_hash = _items_hash(bold_items)
 
-            global _MAIN_BOLD_HASH
+            global _MAIN_BOLD_HASH, _BOLD_NOTE_ITEMS_HASH
+
+            # If either:
+            # - main bold changed
+            # - mirror hash is unknown
+            # - mirror file content differs from what we'd generate (optional but robust)
             if _MAIN_BOLD_HASH != new_bold_hash:
                 _MAIN_BOLD_HASH = new_bold_hash
-                if _write_if_changed(
-                    bold_widget_path, _bold_items_to_plasma_html(bold_items)
-                ):
+
+                mirror_html = _bold_items_to_plasma_html(bold_items)
+                if _write_if_changed(bold_widget_path, mirror_html):
                     _inc_ignore(ignore, bold_widget_path, 1)
+
+                # keep mirror hash in sync with what we wrote
+                _BOLD_NOTE_ITEMS_HASH = new_bold_hash
 
         if ignore:
             logger.info("Sync MAIN Plasma -> Markdown")
@@ -792,7 +882,6 @@ class PlasmaSync(AbstractModule):
             return None
 
         bold_html_raw = _read_file(bold_widget_path)
-
         bold_text = _html_to_text(bold_html_raw)
         items = [ln.strip() for ln in bold_text.splitlines() if ln.strip()]
 
@@ -803,9 +892,9 @@ class PlasmaSync(AbstractModule):
         _BOLD_NOTE_ITEMS_HASH = items_h
 
         main_html_raw = _read_file(widget_path)
-
         main_lines = _plasma_html_to_boldaware_lines(main_html_raw)
-        new_lines = _replace_bold_items_in_lines(main_lines, items)
+
+        new_lines = _replace_bold_runs_in_lines(main_lines, items)
         new_main_html = _boldaware_lines_to_plasma_html(new_lines)
 
         ignore: IgnoreMap = {}
@@ -818,11 +907,11 @@ class PlasmaSync(AbstractModule):
             if _write_if_changed(markdown_path, _CURRENT_TEXT):
                 _inc_ignore(ignore, markdown_path, 1)
 
-        # Keep bold mirror normalized too
+        # normalize mirror (and keep hashes aligned)
         if _write_if_changed(bold_widget_path, _bold_items_to_plasma_html(items)):
             _inc_ignore(ignore, bold_widget_path, 1)
 
-        _MAIN_BOLD_HASH = _items_hash(items)
+        _MAIN_BOLD_HASH = items_h
 
         if ignore:
             logger.info("Sync BOLD mirror -> MAIN -> Markdown")
