@@ -2,6 +2,7 @@ import hashlib
 import html
 import logging
 import os
+import time
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 
@@ -457,6 +458,9 @@ def _plasma_html_to_boldaware_lines(html_src: str) -> List[List[Tuple[str, bool]
     return p.get_lines()
 
 
+# -------------------- FIX START --------------------
+# FIX 1: Extract ONE bold item per LINE by joining all bold segments within that line.
+# This prevents the "append text at end -> Plasma splits bold into 2 spans -> mirror loses tail" bug.
 def _extract_bold_items_from_html(html_src: str) -> List[str]:
     p = _PlasmaBoldAwareParser()
     p.feed(html_src)
@@ -464,24 +468,10 @@ def _extract_bold_items_from_html(html_src: str) -> List[str]:
 
     items: List[str] = []
     for line in lines:
-        # Extract each bold RUN as one item
-        cur: List[str] = []
-        in_bold = False
-        for t, b in line:
-            if b:
-                in_bold = True
-                cur.append(t)
-            else:
-                if in_bold:
-                    s = "".join(cur).strip()
-                    if s:
-                        items.append(s)
-                    cur = []
-                    in_bold = False
-        if in_bold:
-            s = "".join(cur).strip()
-            if s:
-                items.append(s)
+        buf: List[str] = [t for (t, b) in line if b and t]
+        s = "".join(buf).strip()
+        if s:
+            items.append(s)
 
     return items
 
@@ -526,15 +516,12 @@ def _bold_items_to_plasma_html(items: List[str]) -> str:
     return header + "".join(parts) + "</body></html>\n"
 
 
-def _replace_bold_runs_in_lines(
+# FIX 2: Replace bold content BY LINE, not by "bold runs".
+# If Plasma splits a single line's bold into multiple segments, we still treat that as one logical item.
+def _replace_bold_items_in_lines(
     main_lines: List[List[Tuple[str, bool]]],
     new_items: List[str],
 ) -> List[List[Tuple[str, bool]]]:
-    """
-    Replace each bold RUN with next item from new_items.
-    If items are fewer: original run becomes normal text (unbold).
-    If items are more: append extra bold lines at the end.
-    """
     items = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in new_items]
     items = [it for it in items if it]
 
@@ -542,36 +529,29 @@ def _replace_bold_runs_in_lines(
     k = 0
 
     for line in main_lines:
-        new_line: List[Tuple[str, bool]] = []
-        i = 0
-        while i < len(line):
-            t, b = line[i]
-            if not b:
-                new_line.append((t, False))
-                i += 1
-                continue
+        has_bold = any(b for _t, b in line)
 
-            # We are at start (or inside) a bold run: consume whole run
-            # Detect run start: if previous tuple is not bold
-            run_text_parts: List[str] = []
-            while i < len(line) and line[i][1] is True:
-                run_text_parts.append(line[i][0])
-                i += 1
+        if not has_bold:
+            out.append(line)
+            continue
 
-            if k < len(items):
-                new_line.append((items[k], True))
-                k += 1
-            else:
-                # no replacement item left -> keep content but remove bold
-                new_line.append(("".join(run_text_parts), False))
+        # If this line contains any bold -> it maps to exactly ONE item.
+        if k < len(items):
+            out.append([(items[k], True)])
+            k += 1
+        else:
+            # Items ended: keep line as-is (do NOT forcibly unbold parts).
+            out.append(line)
 
-        out.append(new_line)
-
+    # If mirror has more items -> append them as new bold lines
     while k < len(items):
         out.append([(items[k], True)])
         k += 1
 
     return out
+
+
+# -------------------- FIX END --------------------
 
 
 def _boldaware_lines_to_plasma_html(lines: List[List[Tuple[str, bool]]]) -> str:
@@ -850,10 +830,6 @@ class PlasmaSync(AbstractModule):
 
             global _MAIN_BOLD_HASH, _BOLD_NOTE_ITEMS_HASH
 
-            # If either:
-            # - main bold changed
-            # - mirror hash is unknown
-            # - mirror file content differs from what we'd generate (optional but robust)
             if _MAIN_BOLD_HASH != new_bold_hash:
                 _MAIN_BOLD_HASH = new_bold_hash
 
@@ -861,7 +837,6 @@ class PlasmaSync(AbstractModule):
                 if _write_if_changed(bold_widget_path, mirror_html):
                     _inc_ignore(ignore, bold_widget_path, 1)
 
-                # keep mirror hash in sync with what we wrote
                 _BOLD_NOTE_ITEMS_HASH = new_bold_hash
 
         if ignore:
@@ -894,7 +869,8 @@ class PlasmaSync(AbstractModule):
         main_html_raw = _read_file(widget_path)
         main_lines = _plasma_html_to_boldaware_lines(main_html_raw)
 
-        new_lines = _replace_bold_runs_in_lines(main_lines, items)
+        # FIX: replace by LINE, not by runs
+        new_lines = _replace_bold_items_in_lines(main_lines, items)
         new_main_html = _boldaware_lines_to_plasma_html(new_lines)
 
         ignore: IgnoreMap = {}
