@@ -2,8 +2,7 @@ import hashlib
 import html
 import logging
 import os
-import re
-import time
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 
@@ -15,38 +14,29 @@ logger = logging.getLogger(__name__)
 
 IgnoreMap = Dict[str, int]
 
+_IGNORE_BURST = 1
+
+
 # ---------------- State ---------------- #
 
-# Markdown state (WITH **bold** markers)
-_CURRENT_MD_TEXT: Optional[str] = None
-_CURRENT_MD_HASH: Optional[str] = None
-
-# Plain state (NO markdown markers) – used for convenience/logging
-_CURRENT_PLAIN_TEXT: Optional[str] = None
-_CURRENT_PLAIN_HASH: Optional[str] = None
-
-# Bold items hash (canonical list of bold items, one per bold line)
-_MAIN_BOLD_HASH: Optional[str] = None
-_BOLD_NOTE_ITEMS_HASH: Optional[str] = None
-
-# one-time init guard
 _INIT_DONE: bool = False
+
+_LAST_DOC_HASH: Optional[str] = None  # canonical doc hash (content + bold + list state)
+_LAST_BOLD_ITEMS_HASH: Optional[str] = None  # mirror items hash
 
 
 # ---------------- IO ---------------- #
 
 
 def _rpath(p: str) -> str:
-    """Absolute + realpath to avoid symlink differences across reboot / watchdog."""
     return os.path.realpath(os.path.abspath(os.path.expanduser(p)))
 
 
 def _read_file(path: str) -> str:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(_rpath(path), "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        logger.debug("File not found: %s", path)
         return ""
     except PermissionError as e:
         logger.error("Permission error reading %s: %s", path, e)
@@ -58,29 +48,11 @@ def _read_file(path: str) -> str:
         return ""
 
 
-def _read_file_stable(path: str, tries: int = 3, delay: float = 0.03) -> str:
-    """
-    Some editors / Qt richtext saves can generate multiple writes.
-    This helper tries to read a stable snapshot (same content twice).
-    """
-    last = None
-    out = ""
-    for _ in range(max(1, tries)):
-        out = _read_file(path)
-        if last is not None and out == last:
-            return out
-        last = out
-        if delay > 0:
-            time.sleep(delay)
-    return out
-
-
 def _write_if_changed(path: str, content: str) -> bool:
     path = _rpath(path)
     old = _read_file(path)
     if old == content:
         return False
-
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -101,186 +73,196 @@ def _inc_ignore(ignore: IgnoreMap, path: str, times: int = 1) -> None:
     ignore[ap] = ignore.get(ap, 0) + int(times)
 
 
-# ---------------- Text helpers ---------------- #
+# ---------------- Hashing / Normalization ---------------- #
 
 
 def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _normalize_text(text: str) -> str:
-    """
-    Normalization goals:
-    - stable newlines
-    - trim leading/trailing blank lines
-    - collapse multiple blank lines to at most 1
-    - keep tight formatting around lists:
-      no blank between '-' items
-      no blank after ':' before list
-    """
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    lines = text.splitlines()
-    n = len(lines)
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
+
+def _trim_trailing_spaces_per_line(text: str) -> str:
+    return "\n".join([ln.rstrip() for ln in _normalize_newlines(text).split("\n")])
+
+
+def _normalize_md(text: str) -> str:
+    # keep user formatting, just normalize newlines + trailing spaces
+    return _trim_trailing_spaces_per_line(text).strip("\n")
+
+
+# ---------------- Document model ---------------- #
+
+
+@dataclass
+class DocLine:
+    kind: str  # "p" or "li"
+    state: Optional[str]  # for li: "unchecked" / "checked" / None
+    segs: List[Tuple[str, bool]]  # (text, is_bold)
+
+
+def _segs_plain(segs: List[Tuple[str, bool]]) -> str:
+    return "".join(t for t, _b in segs)
+
+
+def _segs_has_bold(segs: List[Tuple[str, bool]]) -> bool:
+    return any(b for _t, b in segs)
+
+
+def _merge_segs(segs: List[Tuple[str, bool]]) -> List[Tuple[str, bool]]:
+    out: List[Tuple[str, bool]] = []
+    for t, b in segs:
+        if not t:
+            continue
+        if out and out[-1][1] == b:
+            out[-1] = (out[-1][0] + t, b)
+        else:
+            out.append((t, b))
+    return out
+
+
+# ---------------- Markdown (**bold**) parsing ---------------- #
+
+
+def _find_unescaped_double_stars(s: str) -> List[int]:
+    pos: List[int] = []
     i = 0
-    while i < n and lines[i].strip() == "":
+    while i < len(s) - 1:
+        if s[i] == "\\":
+            i += 2
+            continue
+        if s[i : i + 2] == "**":
+            pos.append(i)
+            i += 2
+            continue
         i += 1
+    # if odd, last one is treated as literal
+    if len(pos) % 2 == 1:
+        pos = pos[:-1]
+    return pos
 
-    result: List[str] = []
-    last_nonblank: Optional[str] = None
 
-    while i < n:
-        line = lines[i]
+def _md_line_to_segs(line: str) -> List[Tuple[str, bool]]:
+    line = _normalize_newlines(line)
+    stars = _find_unescaped_double_stars(line)
+    if not stars:
+        return [(line.replace("\\*", "*").replace("\\\\", "\\"), False)]
 
-        if line.strip() != "":
-            result.append(line)
-            last_nonblank = line
-            i += 1
+    cut = set(stars)
+    segs: List[Tuple[str, bool]] = []
+    buf: List[str] = []
+    bold = False
+    i = 0
+
+    while i < len(line):
+        if i in cut and line[i : i + 2] == "**":
+            txt = "".join(buf)
+            if txt:
+                txt = txt.replace("\\*", "*").replace("\\\\", "\\")
+                segs.append((txt, bold))
+            buf = []
+            bold = not bold
+            i += 2
             continue
 
-        j = i
-        while j < n and lines[j].strip() == "":
-            j += 1
+        if line[i] == "\\" and i + 1 < len(line):
+            # keep escaped char literally
+            buf.append(line[i + 1])
+            i += 2
+            continue
 
-        if j == n:
-            break
+        buf.append(line[i])
+        i += 1
 
-        next_line = lines[j]
-        prev = (last_nonblank or "").rstrip()
-        next_stripped = next_line.lstrip()
+    txt = "".join(buf)
+    if txt:
+        segs.append((txt, bold))
 
-        keep_blank_count = 1
-        if prev.endswith(":") and next_stripped.startswith("- "):
-            keep_blank_count = 0
-        elif prev.lstrip().startswith("- ") and next_stripped.startswith("- "):
-            keep_blank_count = 0
-
-        result.extend([""] * keep_blank_count)
-        i = j
-
-    while result and result[-1].strip() == "":
-        result.pop()
-
-    return "\n".join(result)
+    return _merge_segs(segs)
 
 
-def _update_md_state(md_text: str) -> bool:
-    global _CURRENT_MD_TEXT, _CURRENT_MD_HASH
-    md_norm = _normalize_text(md_text)
-    h = _hash_text(md_norm)
-    if _CURRENT_MD_HASH == h:
-        return False
-    _CURRENT_MD_TEXT = md_norm
-    _CURRENT_MD_HASH = h
-    return True
+def _escape_md_text(s: str) -> str:
+    # escape backslash first, then asterisk
+    s = s.replace("\\", "\\\\")
+    s = s.replace("*", "\\*")
+    return s
 
 
-def _set_plain_state(plain_text: str) -> None:
-    global _CURRENT_PLAIN_TEXT, _CURRENT_PLAIN_HASH
-    plain_norm = _normalize_text(plain_text)
-    _CURRENT_PLAIN_TEXT = plain_norm
-    _CURRENT_PLAIN_HASH = _hash_text(plain_norm)
+def _segs_to_md(segs: List[Tuple[str, bool]]) -> str:
+    out: List[str] = []
+    for t, b in segs:
+        t = _escape_md_text(t)
+        if b and t:
+            out.append(f"**{t}**")
+        else:
+            out.append(t)
+    return "".join(out)
 
 
-# ---------------- Plain text <-> Plasma HTML ---------------- #
+def _md_to_doc(md_text: str) -> List[DocLine]:
+    md_text = _normalize_newlines(md_text)
+    lines: List[DocLine] = []
+    for raw in md_text.split("\n"):
+        ln = raw.rstrip("\n")
+        if ln.strip() == "":
+            lines.append(DocLine(kind="p", state=None, segs=[]))
+            continue
+
+        # checkbox list item
+        low = ln.lstrip()
+        if low.startswith("- [ ] "):
+            content = low[len("- [ ] ") :]
+            segs = _md_line_to_segs(content)
+            lines.append(DocLine(kind="li", state="unchecked", segs=segs))
+            continue
+        if low.lower().startswith("- [x] "):
+            content = low[6:]
+            segs = _md_line_to_segs(content)
+            lines.append(DocLine(kind="li", state="checked", segs=segs))
+            continue
+
+        # normal paragraph
+        segs = _md_line_to_segs(ln)
+        lines.append(DocLine(kind="p", state=None, segs=segs))
+
+    # trim leading/trailing empty paragraphs
+    while lines and lines[0].kind == "p" and _segs_plain(lines[0].segs).strip() == "":
+        lines.pop(0)
+    while lines and lines[-1].kind == "p" and _segs_plain(lines[-1].segs).strip() == "":
+        lines.pop()
+
+    return lines
 
 
-class _PlasmaHTMLParser(HTMLParser):
-    """
-    IMPORTANT:
-    HTMLParser emits handle_data() for whitespace between tags.
-    Plasma HTML has newlines between <p>...</p> blocks,
-    and we must NOT treat those as user content.
-    """
+def _doc_to_md(doc: List[DocLine]) -> str:
+    out_lines: List[str] = []
+    for dl in doc:
+        if dl.kind == "p":
+            out_lines.append(_segs_to_md(dl.segs) if dl.segs else "")
+            continue
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._in_body = False
-        self._in_block = False  # inside <p> or <li>
-        self._current: Optional[str] = None
-        self._lines: List[str] = []
+        # li
+        prefix = "- "
+        if dl.state == "unchecked":
+            prefix = "- [ ] "
+        elif dl.state == "checked":
+            prefix = "- [x] "
+        out_lines.append(prefix + _segs_to_md(dl.segs))
 
-    def handle_starttag(self, tag, attrs):
-        tag = tag.lower()
-
-        if tag == "body":
-            self._in_body = True
-            return
-
-        if not self._in_body:
-            return
-
-        if tag in ("p", "li"):
-            if self._current is not None and self._in_block:
-                self._lines.append(self._current)
-            self._current = ""
-            self._in_block = True
-            return
-
-        if not self._in_block:
-            return
-
-        if tag == "br":
-            if self._current is None:
-                self._current = ""
-            self._current += "\n"
-
-    def handle_endtag(self, tag):
-        tag = tag.lower()
-
-        if tag == "body":
-            if self._current is not None and self._in_block:
-                self._lines.append(self._current)
-            self._current = None
-            self._in_body = False
-            self._in_block = False
-            return
-
-        if not self._in_body:
-            return
-
-        if tag in ("p", "li"):
-            if self._current is None:
-                self._current = ""
-            self._lines.append(self._current)
-            self._current = None
-            self._in_block = False
-
-    def handle_data(self, data):
-        if not self._in_body:
-            return
-        if not isinstance(data, str):
-            return
-
-        # ignore whitespace-only text nodes BETWEEN blocks
-        if not self._in_block and data.strip() == "":
-            return
-
-        if self._current is None:
-            if data.strip() == "":
-                return
-            self._current = ""
-        self._current += data
-
-    def get_text(self) -> str:
-        if self._current is not None and self._in_block:
-            self._lines.append(self._current)
-        self._current = None
-        self._in_block = False
-        return "\n".join(self._lines)
+    return _normalize_md("\n".join(out_lines))
 
 
-def _html_to_text(html_src: str) -> str:
-    parser = _PlasmaHTMLParser()
-    parser.feed(html_src)
-    return _normalize_text(parser.get_text())
+def _doc_hash(doc: List[DocLine]) -> str:
+    return _hash_text(_doc_to_md(doc))
 
 
-# ---------------- Bold-aware Plasma HTML parsing ---------------- #
+# ---------------- Plasma HTML parsing (bold-aware + list-aware) ---------------- #
 
 
 def _style_is_bold(style: str) -> bool:
-    s = style.lower().replace(" ", "")
+    s = (style or "").lower().replace(" ", "")
     if "font-weight:bold" in s:
         return True
     if "font-weight:" in s:
@@ -294,50 +276,44 @@ def _style_is_bold(style: str) -> bool:
     return False
 
 
-class _PlasmaBoldAwareParser(HTMLParser):
+class _PlasmaDocParser(HTMLParser):
     """
-    Produces lines as list of (text, is_bold) tuples.
-    Ignores whitespace-only data outside block tags.
+    Robust against nested blocks like: <li ...><p ...>text</p></li>
+    - top-level <li> produces one DocLine(kind="li")
+    - top-level <p> produces one DocLine(kind="p")
+    - <p> inside <li> is treated as inline container, not a separate line
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._in_body = False
-        self._block_depth = 0  # counts <p>/<li>
+        self._in_li_depth = 0
+
+        self._cur: Optional[DocLine] = None
+
         self._bold_depth = 0
         self._span_bold_stack: List[bool] = []
-        self._tag_style_bold: Dict[str, List[bool]] = {"p": [], "li": [], "font": []}
-        self._lines: List[List[Tuple[str, bool]]] = [[]]
+        self._font_bold_stack: List[bool] = []
 
-    def _in_block(self) -> bool:
-        return self._block_depth > 0
+        self._doc: List[DocLine] = []
 
-    def _newline(self) -> None:
-        self._lines.append([])
+    def _finalize(self) -> None:
+        if self._cur is None:
+            return
+        self._cur.segs = _merge_segs(self._cur.segs)
+        self._doc.append(self._cur)
+        self._cur = None
+
+    def _ensure_cur(self, kind: str, state: Optional[str]) -> None:
+        if self._cur is None:
+            self._cur = DocLine(kind=kind, state=state, segs=[])
 
     def _append(self, text: str) -> None:
+        if self._cur is None:
+            return
         if not text:
             return
-        self._lines[-1].append((text, self._bold_depth > 0))
-
-    def _push_tag_style_bold(self, tag: str, attrs) -> None:
-        style = ""
-        for k, v in attrs:
-            if k.lower() == "style" and isinstance(v, str):
-                style = v
-                break
-        is_bold = _style_is_bold(style)
-        self._tag_style_bold[tag].append(is_bold)
-        if is_bold:
-            self._bold_depth += 1
-
-    def _pop_tag_style_bold(self, tag: str) -> None:
-        st = self._tag_style_bold.get(tag)
-        if not st:
-            return
-        was_bold = st.pop() if st else False
-        if was_bold:
-            self._bold_depth = max(0, self._bold_depth - 1)
+        self._cur.segs.append((text, self._bold_depth > 0))
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -348,13 +324,33 @@ class _PlasmaBoldAwareParser(HTMLParser):
         if not self._in_body:
             return
 
-        if tag in ("p", "li"):
-            self._block_depth += 1
-            self._push_tag_style_bold(tag, attrs)
+        if tag == "li":
+            # new logical line (list item)
+            self._finalize()
+            cls = ""
+            for k, v in attrs:
+                if k.lower() == "class" and isinstance(v, str):
+                    cls = v.lower()
+                    break
+            state = None
+            if "unchecked" in cls:
+                state = "unchecked"
+            elif "checked" in cls:
+                state = "checked"
+            self._ensure_cur("li", state)
+            self._in_li_depth += 1
             return
 
-        if tag == "font":
-            self._push_tag_style_bold("font", attrs)
+        if tag == "p":
+            # only top-level <p> makes a new line
+            if self._in_li_depth == 0:
+                self._finalize()
+                self._ensure_cur("p", None)
+            return
+
+        if tag == "br":
+            # treat as newline only when we are in a paragraph line (rare in Qt output)
+            # in empty paragraphs Qt uses <br />, which we keep as empty segs -> blank line.
             return
 
         if tag in ("b", "strong"):
@@ -367,24 +363,45 @@ class _PlasmaBoldAwareParser(HTMLParser):
                 if k.lower() == "style" and isinstance(v, str):
                     style = v
                     break
-            is_bold = _style_is_bold(style)
-            self._span_bold_stack.append(is_bold)
-            if is_bold:
+            is_b = _style_is_bold(style)
+            self._span_bold_stack.append(is_b)
+            if is_b:
                 self._bold_depth += 1
             return
 
-        if tag == "br":
-            self._newline()
+        if tag == "font":
+            style = ""
+            for k, v in attrs:
+                if k.lower() == "style" and isinstance(v, str):
+                    style = v
+                    break
+            is_b = _style_is_bold(style)
+            self._font_bold_stack.append(is_b)
+            if is_b:
+                self._bold_depth += 1
             return
 
     def handle_endtag(self, tag):
         tag = tag.lower()
 
         if tag == "body":
+            self._finalize()
             self._in_body = False
-            self._block_depth = 0
+            self._in_li_depth = 0
             return
         if not self._in_body:
+            return
+
+        if tag == "li":
+            self._in_li_depth = max(0, self._in_li_depth - 1)
+            # only finalize when we close the outer li
+            if self._in_li_depth == 0:
+                self._finalize()
+            return
+
+        if tag == "p":
+            if self._in_li_depth == 0:
+                self._finalize()
             return
 
         if tag in ("b", "strong"):
@@ -393,172 +410,55 @@ class _PlasmaBoldAwareParser(HTMLParser):
 
         if tag == "span":
             if self._span_bold_stack:
-                was_bold = self._span_bold_stack.pop()
-                if was_bold:
+                was = self._span_bold_stack.pop()
+                if was:
                     self._bold_depth = max(0, self._bold_depth - 1)
             return
 
         if tag == "font":
-            self._pop_tag_style_bold("font")
-            return
-
-        if tag in ("p", "li"):
-            self._pop_tag_style_bold(tag)
-            self._newline()
-            self._block_depth = max(0, self._block_depth - 1)
+            if self._font_bold_stack:
+                was = self._font_bold_stack.pop()
+                if was:
+                    self._bold_depth = max(0, self._bold_depth - 1)
             return
 
     def handle_data(self, data):
         if not self._in_body or not isinstance(data, str):
             return
-        if not self._in_block() and data.strip() == "":
+        if self._cur is None and data.strip() == "":
             return
-        self._append(data)
+        # decode entities if any
+        text = html.unescape(data)
+        # Qt often outputs whitespace between tags; ignore if we're not inside a line
+        if self._cur is None and text.strip() == "":
+            return
+        if self._cur is None:
+            # default to paragraph if text exists without explicit <p> (rare)
+            self._ensure_cur("p", None)
+        self._append(text)
 
-    def get_lines(self) -> List[List[Tuple[str, bool]]]:
-        merged_lines: List[List[Tuple[str, bool]]] = []
-        for line in self._lines:
-            merged: List[Tuple[str, bool]] = []
-            for t, b in line:
-                if not t:
-                    continue
-                if merged and merged[-1][1] == b:
-                    merged[-1] = (merged[-1][0] + t, b)
-                else:
-                    merged.append((t, b))
-            merged_lines.append(merged)
+    def get_doc(self) -> List[DocLine]:
+        self._finalize()
 
-        def txt(ln: List[Tuple[str, bool]]) -> str:
-            return "".join(t for t, _ in ln)
-
-        i = 0
-        while i < len(merged_lines) and txt(merged_lines[i]).strip() == "":
-            i += 1
-        merged_lines = merged_lines[i:]
-
-        j = len(merged_lines) - 1
-        while j >= 0 and txt(merged_lines[j]).strip() == "":
-            j -= 1
-        merged_lines = merged_lines[: j + 1]
-
-        out: List[List[Tuple[str, bool]]] = []
-        prev_blank = False
-        for ln in merged_lines:
-            blank = txt(ln).strip() == ""
-            if blank and prev_blank:
-                continue
-            out.append(ln)
-            prev_blank = blank
-
-        return out
+        # trim empty leading/trailing paragraphs
+        doc = self._doc[:]
+        while doc and doc[0].kind == "p" and _segs_plain(doc[0].segs).strip() == "":
+            doc.pop(0)
+        while doc and doc[-1].kind == "p" and _segs_plain(doc[-1].segs).strip() == "":
+            doc.pop()
+        return doc
 
 
-def _plasma_html_to_boldaware_lines(html_src: str) -> List[List[Tuple[str, bool]]]:
-    p = _PlasmaBoldAwareParser()
+def _html_to_doc(html_src: str) -> List[DocLine]:
+    p = _PlasmaDocParser()
     p.feed(html_src)
-    return p.get_lines()
+    return p.get_doc()
 
 
-# ---------------- Markdown bold (line-level) ---------------- #
-
-_LIST_PREFIX_RE = re.compile(r"^(\s*[-*+]\s+)(.*)$")
+# ---------------- Plasma HTML generation (from doc) ---------------- #
 
 
-def _unwrap_md_bold(s: str) -> Optional[str]:
-    """
-    Accept:
-      **text**
-      ** text **
-    Only if the whole string is wrapped.
-    """
-    s2 = s.strip()
-    if len(s2) >= 4 and s2.startswith("**") and s2.endswith("**"):
-        inner = s2[2:-2].strip()
-        return inner
-    return None
-
-
-def _wrap_md_bold_line(plain_line: str) -> str:
-    """
-    Canonical output:
-      - **Task**
-      **Header**
-    """
-    line = plain_line.rstrip("\n")
-    m = _LIST_PREFIX_RE.match(line)
-    if m:
-        prefix, rest = m.groups()
-        rest2 = rest.strip()
-        if not rest2:
-            return prefix.rstrip()
-        return f"{prefix}**{rest2}**"
-    inner = line.strip()
-    if not inner:
-        return ""
-    return f"**{inner}**"
-
-
-def _normalize_markdown_bold(md_text: str) -> Tuple[str, str, List[str]]:
-    """
-    Returns:
-      md_norm   - canonical markdown with **...** for bold lines
-      plain_norm - markdown converted to plain text (markers removed)
-      items     - bold items (ONE per bold line), without list prefix
-    """
-    md_text = md_text.replace("\r\n", "\n").replace("\r", "\n")
-    out_md_lines: List[str] = []
-    out_plain_lines: List[str] = []
-    items: List[str] = []
-
-    for raw_line in md_text.splitlines():
-        if raw_line.strip() == "":
-            out_md_lines.append("")
-            out_plain_lines.append("")
-            continue
-
-        m = _LIST_PREFIX_RE.match(raw_line)
-        if m:
-            prefix, rest = m.groups()
-            inner = _unwrap_md_bold(rest)
-            if inner is not None:
-                out_md_lines.append(f"{prefix}**{inner}**")
-                out_plain_lines.append(f"{prefix}{inner}")
-                if inner.strip():
-                    items.append(inner.strip())
-            else:
-                out_md_lines.append(raw_line)
-                out_plain_lines.append(raw_line)
-            continue
-
-        inner2 = _unwrap_md_bold(raw_line)
-        if inner2 is not None:
-            out_md_lines.append(f"**{inner2}**")
-            out_plain_lines.append(inner2)
-            if inner2.strip():
-                items.append(inner2.strip())
-        else:
-            out_md_lines.append(raw_line)
-            out_plain_lines.append(raw_line)
-
-    md_norm = _normalize_text("\n".join(out_md_lines))
-    plain_norm = _normalize_text("\n".join(out_plain_lines))
-    items = [
-        it.replace("\r\n", "\n").replace("\r", "\n").strip()
-        for it in items
-        if it.strip()
-    ]
-    return md_norm, plain_norm, items
-
-
-def _markdown_to_plasma_html(md_text: str) -> str:
-    """
-    Convert markdown-with-bold-markers into Plasma qrichtext HTML.
-    Bold is supported only for full-line bold:
-      - **Task**
-      **Header**
-    """
-    md_norm, _plain, _items = _normalize_markdown_bold(md_text)
-
+def _doc_to_plasma_html(doc: List[DocLine]) -> str:
     header = (
         '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" '
         '"http://www.w3.org/TR/REC-html40/strict.dtd">\n'
@@ -579,43 +479,65 @@ def _markdown_to_plasma_html(md_text: str) -> str:
         "margin-right:0px; -qt-block-indent:0; text-indent:0px;"
     )
 
+    def segs_to_inner(segs: List[Tuple[str, bool]]) -> str:
+        inner: List[str] = []
+        for t, b in _merge_segs(segs):
+            safe = html.escape(t, quote=False)
+            inner.append(
+                f'<span style=" font-weight:600;">{safe}</span>' if b else safe
+            )
+        return "".join(inner)
+
     parts: List[str] = []
-    for line in md_norm.splitlines():
-        if line.strip() == "":
+    in_ul = False
+
+    for dl in doc:
+        if dl.kind == "li":
+            if not in_ul:
+                parts.append("<ul>\n")
+                in_ul = True
+
+            cls = ""
+            if dl.state == "unchecked":
+                cls = ' class="unchecked"'
+            elif dl.state == "checked":
+                cls = ' class="checked"'
+
+            inner = segs_to_inner(dl.segs)
+            # keep per-item paragraph style for consistent margins
+            parts.append(f'<li{cls}><p style="{base_style}">{inner}</p></li>\n')
+            continue
+
+        # paragraph
+        if in_ul:
+            parts.append("</ul>\n")
+            in_ul = False
+
+        if _segs_plain(dl.segs).strip() == "":
             parts.append(
                 f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n'
             )
-            continue
-
-        m = _LIST_PREFIX_RE.match(line)
-        if m:
-            prefix, rest = m.groups()
-            inner = _unwrap_md_bold(rest)
-            if inner is not None:
-                pfx = html.escape(prefix, quote=False)
-                inn = html.escape(inner, quote=False)
-                parts.append(
-                    f'<p style="{base_style}">{pfx}<span style=" font-weight:600;">{inn}</span></p>\n'
-                )
-            else:
-                safe = html.escape(line, quote=False)
-                parts.append(f'<p style="{base_style}">{safe}</p>\n')
-            continue
-
-        inner2 = _unwrap_md_bold(line)
-        if inner2 is not None:
-            inn = html.escape(inner2, quote=False)
-            parts.append(
-                f'<p style="{base_style}"><span style=" font-weight:600;">{inn}</span></p>\n'
-            )
         else:
-            safe = html.escape(line, quote=False)
-            parts.append(f'<p style="{base_style}">{safe}</p>\n')
+            inner = segs_to_inner(dl.segs)
+            parts.append(f'<p style="{base_style}">{inner}</p>\n')
+
+    if in_ul:
+        parts.append("</ul>\n")
 
     return header + "".join(parts) + "</body></html>\n"
 
 
-# ---------------- Bold mirror HTML generation ---------------- #
+# ---------------- Bold mirror helpers ---------------- #
+
+
+def _extract_bold_items_from_doc(doc: List[DocLine]) -> List[str]:
+    items: List[str] = []
+    for dl in doc:
+        buf = [t for (t, b) in dl.segs if b and t]
+        s = "".join(buf).strip()
+        if s:
+            items.append(s)
+    return items
 
 
 def _items_hash(items: List[str]) -> str:
@@ -625,200 +547,65 @@ def _items_hash(items: List[str]) -> str:
 
 
 def _bold_items_to_plasma_html(items: List[str]) -> str:
-    header = (
-        '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" '
-        '"http://www.w3.org/TR/REC-html40/strict.dtd">\n'
-        '<html><head><meta name="qrichtext" content="1" />'
-        '<meta charset="utf-8" />'
-        '<style type="text/css">\n'
-        "p, li { white-space: pre-wrap; }\n"
-        "hr { height: 1px; border-width: 0; }\n"
-        'li.unchecked::marker { content: "\\2610"; }\n'
-        'li.checked::marker { content: "\\2612"; }\n'
-        "</style></head>"
-        "<body style=\" font-family:'Noto Sans'; font-size:10pt; "
-        'font-weight:400; font-style:normal;">\n'
-    )
-
-    base_style = (
-        " margin-top:0px; margin-bottom:0px; margin-left:0px; "
-        "margin-right:0px; -qt-block-indent:0; text-indent:0px;"
-    )
-
-    norm = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in items]
-    norm = [it for it in norm if it]
-
-    parts: List[str] = []
-    for line in norm:
-        safe = html.escape(line, quote=False)
-        parts.append(
-            f'<p style="{base_style}"><span style=" font-weight:600;">{safe}</span></p>\n'
-        )
-
-    return header + "".join(parts) + "</body></html>\n"
+    # each line is fully bold in the mirror
+    doc = [
+        DocLine(kind="p", state=None, segs=[(it.strip(), True)])
+        for it in items
+        if it.strip()
+    ]
+    return _doc_to_plasma_html(doc)
 
 
-# ---------------- MAIN html -> markdown(+items) ---------------- #
+def _mirror_html_to_items(mirror_html: str) -> List[str]:
+    # mirror contains bold lines only; we read visible text lines
+    doc = _html_to_doc(mirror_html)
+    items: List[str] = []
+    for dl in doc:
+        s = _segs_plain(dl.segs).strip()
+        if s:
+            items.append(s)
+    return items
 
 
-def _looks_like_complete_html(s: str) -> bool:
-    s2 = s.lower()
-    return (
-        ("<html" in s2) and ("<body" in s2) and ("</body>" in s2) and ("</html>" in s2)
-    )
-
-
-def _main_html_to_markdown_and_items(html_raw: str) -> Tuple[str, str, List[str]]:
+def _apply_mirror_items_to_doc(
+    main_doc: List[DocLine], items: List[str]
+) -> List[DocLine]:
     """
-    Convert MAIN Plasma HTML to:
-      md_norm   - markdown with **...** for bold lines
-      plain_norm - plain text (markers removed)
-      items     - bold items, one per bold line (without list prefix)
+    Line-safe mapping:
+    - every line that contains ANY bold in MAIN consumes exactly 1 item from mirror
+    - we replace the whole line content with that item (fully bold), preserving line kind/state
+    - if mirror has more items, append them as new bold paragraphs
+    - if mirror has fewer, we keep remaining bold lines unchanged (no data loss)
     """
-    lines = _plasma_html_to_boldaware_lines(html_raw)
-    md_lines: List[str] = []
-
-    for ln in lines:
-        plain_line = "".join(t for t, _b in ln)
-        if plain_line.strip() == "":
-            md_lines.append("")
-            continue
-
-        has_bold = any(b for _t, b in ln)
-        if has_bold:
-            md_lines.append(_wrap_md_bold_line(plain_line))
-        else:
-            md_lines.append(plain_line)
-
-    md_candidate = _normalize_text("\n".join(md_lines))
-    md_norm, plain_norm, items = _normalize_markdown_bold(md_candidate)
-    return md_norm, plain_norm, items
-
-
-# ---------------- Mirror -> MAIN bold replacement (preserve prefix/suffix) ---------------- #
-
-
-def _replace_bold_region_preserve(
-    line: List[Tuple[str, bool]],
-    item: str,
-) -> List[Tuple[str, bool]]:
-    """
-    Replace the region from first bold segment to last bold segment with ONE bold tuple (item),
-    keeping the non-bold prefix and suffix intact.
-    This prevents losing list prefix like "- ".
-    """
-    idxs = [i for i, (_t, b) in enumerate(line) if b]
-    if not idxs:
-        return line
-
-    first = idxs[0]
-    last = idxs[-1]
-
-    out: List[Tuple[str, bool]] = []
-    for i in range(0, first):
-        t, _b = line[i]
-        out.append((t, False))
-
-    out.append((item, True))
-
-    for i in range(last + 1, len(line)):
-        t, _b = line[i]
-        out.append((t, False))
-
-    return out
-
-
-def _replace_bold_items_in_lines(
-    main_lines: List[List[Tuple[str, bool]]],
-    new_items: List[str],
-) -> List[List[Tuple[str, bool]]]:
-    """
-    Map ONE mirror item per MAIN line that contains bold (any bold in the line).
-    Keeps non-bold prefix/suffix (like "- ").
-    If mirror has more items -> append new bold-only lines at end.
-    If mirror has fewer items -> keep remaining lines unchanged.
-    """
-    items = [it.replace("\r\n", "\n").replace("\r", "\n").strip() for it in new_items]
-    items = [it for it in items if it]
-
-    out: List[List[Tuple[str, bool]]] = []
+    cleaned = [it.strip() for it in items if it.strip()]
+    out: List[DocLine] = []
     k = 0
 
-    for line in main_lines:
-        has_bold = any(b for _t, b in line)
-        if not has_bold:
-            out.append(line)
+    for dl in main_doc:
+        if not _segs_has_bold(dl.segs):
+            out.append(dl)
             continue
 
-        if k < len(items):
-            out.append(_replace_bold_region_preserve(line, items[k]))
+        if k < len(cleaned):
+            out.append(DocLine(kind=dl.kind, state=dl.state, segs=[(cleaned[k], True)]))
             k += 1
         else:
-            out.append(line)
+            out.append(dl)
 
-    while k < len(items):
-        out.append([(items[k], True)])
+    while k < len(cleaned):
+        out.append(DocLine(kind="p", state=None, segs=[(cleaned[k], True)]))
         k += 1
 
     return out
 
 
-def _boldaware_lines_to_plasma_html(lines: List[List[Tuple[str, bool]]]) -> str:
-    header = (
-        '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" '
-        '"http://www.w3.org/TR/REC-html40/strict.dtd">\n'
-        '<html><head><meta name="qrichtext" content="1" />'
-        '<meta charset="utf-8" />'
-        '<style type="text/css">\n'
-        "p, li { white-space: pre-wrap; }\n"
-        "hr { height: 1px; border-width: 0; }\n"
-        'li.unchecked::marker { content: "\\2610"; }\n'
-        'li.checked::marker { content: "\\2612"; }\n'
-        "</style></head>"
-        "<body style=\" font-family:'Noto Sans'; font-size:10pt; "
-        'font-weight:400; font-style:normal;">\n'
-    )
-
-    base_style = (
-        " margin-top:0px; margin-bottom:0px; margin-left:0px; "
-        "margin-right:0px; -qt-block-indent:0; text-indent:0px;"
-    )
-
-    def plain(ln: List[Tuple[str, bool]]) -> str:
-        return "".join(t for t, _ in ln)
-
-    parts: List[str] = []
-    for ln in lines:
-        if plain(ln).strip() == "":
-            parts.append(
-                f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n'
-            )
-            continue
-
-        inner: List[str] = []
-        for t, b in ln:
-            safe = html.escape(t, quote=False)
-            inner.append(
-                f'<span style=" font-weight:600;">{safe}</span>' if b else safe
-            )
-
-        parts.append(f'<p style="{base_style}">{"".join(inner)}</p>\n')
-
-    return header + "".join(parts) + "</body></html>\n"
-
-
-# ---------------- Startup init (cold-start fix) ---------------- #
+# ---------------- Startup init ---------------- #
 
 
 def _init_from_disk_once(
     widget_path: str, markdown_path: str, bold_widget_path: Optional[str]
 ) -> None:
-    """
-    Initialize hashes from disk once.
-    Markdown (with **bold**) is preferred as canonical if it exists.
-    """
-    global _INIT_DONE, _MAIN_BOLD_HASH, _BOLD_NOTE_ITEMS_HASH
-
+    global _INIT_DONE, _LAST_DOC_HASH, _LAST_BOLD_ITEMS_HASH
     if _INIT_DONE:
         return
     _INIT_DONE = True
@@ -827,30 +614,24 @@ def _init_from_disk_once(
     markdown_path = _rpath(markdown_path)
     bold_widget_path = _rpath(bold_widget_path) if bold_widget_path else None
 
-    md_raw = _read_file(markdown_path)
-    if md_raw:
-        md_norm, plain_norm, items = _normalize_markdown_bold(md_raw)
-        _update_md_state(md_norm)
-        _set_plain_state(plain_norm)
-        h = _items_hash(items)
-        _MAIN_BOLD_HASH = h
-        _BOLD_NOTE_ITEMS_HASH = h
+    # prefer markdown as canonical at boot if it exists
+    md = _read_file(markdown_path)
+    if md.strip():
+        doc = _md_to_doc(_normalize_md(md))
+        _LAST_DOC_HASH = _doc_hash(doc)
+        _LAST_BOLD_ITEMS_HASH = _items_hash(_extract_bold_items_from_doc(doc))
         return
 
-    main_html = _read_file(widget_path)
-    if main_html:
-        try:
-            md_norm, plain_norm, items = _main_html_to_markdown_and_items(main_html)
-            _update_md_state(md_norm)
-            _set_plain_state(plain_norm)
-            h = _items_hash(items)
-            _MAIN_BOLD_HASH = h
-            _BOLD_NOTE_ITEMS_HASH = h
-        except Exception:
-            _update_md_state("")
-            _set_plain_state("")
-            _MAIN_BOLD_HASH = _items_hash([])
-            _BOLD_NOTE_ITEMS_HASH = _items_hash([])
+    html_main = _read_file(widget_path)
+    if html_main.strip():
+        doc = _html_to_doc(html_main)
+        _LAST_DOC_HASH = _doc_hash(doc)
+        _LAST_BOLD_ITEMS_HASH = _items_hash(_extract_bold_items_from_doc(doc))
+        return
+
+    # empty
+    _LAST_DOC_HASH = _hash_text("")
+    _LAST_BOLD_ITEMS_HASH = _hash_text("")
 
 
 # ---------------- Module ---------------- #
@@ -865,19 +646,19 @@ class PlasmaSync(AbstractModule):
             "--plasma-widget-path",
             str,
             None,
-            "Path to the main Plasma note HTML file (widget file). Example: --plasma-widget-path ~/.local/share/plasma_notes/123.html",
+            "Path to the main Plasma note HTML file (widget file).",
         ),
         (
             "--plasma-bold-widget-path",
             str,
             None,
-            "Optional: path to a separate Plasma widget HTML file used as a 'bold-only mirror'. Example: --plasma-bold-widget-path ~/.local/share/plasma_notes/bold_123.html",
+            "Optional: path to a Plasma widget HTML file used as a 'bold-only mirror'.",
         ),
         (
             "--plasma-markdown-note-path",
             str,
             None,
-            "Path to the plain-text Markdown note that is synced with the Plasma widget(s). Example: --plasma-markdown-note-path ~/notes/todo.md",
+            "Path to the Markdown note (supports **bold** and - [ ] / - [x]).",
         ),
     ]
 
@@ -894,7 +675,7 @@ class PlasmaSync(AbstractModule):
         return None
 
     def _cfg(self, ctx: Context) -> tuple[str, str, Optional[str]]:
-        cfg = ctx.config  # trust parse_args shape
+        cfg = ctx.config
 
         def one_value(key: str, flag: str, required: bool) -> Optional[str]:
             val = cfg.get(key)
@@ -902,17 +683,14 @@ class PlasmaSync(AbstractModule):
                 if required:
                     raise ValueError(f"PlasmaSync: missing required {flag}")
                 return None
-
             if isinstance(val, list):
                 if len(val) != 1:
                     raise ValueError(
                         f"PlasmaSync: {flag} expects exactly one value, got {len(val)}"
                     )
                 val = val[0]
-
             if not isinstance(val, str) or not val.strip():
                 raise ValueError(f"PlasmaSync: invalid value for {flag}")
-
             return _rpath(val)
 
         widget_path = one_value("plasma_widget_path", "--plasma-widget-path", True)
@@ -948,15 +726,30 @@ class PlasmaSync(AbstractModule):
 
         return None
 
-    # ---------- Flow: Markdown -> MAIN (+ mirror) ----------
+    def _sync_bold_mirror_from_doc(
+        self, doc: List[DocLine], bold_widget_path: Optional[str], ignore: IgnoreMap
+    ) -> None:
+        global _LAST_BOLD_ITEMS_HASH
+
+        if not bold_widget_path:
+            return
+
+        items = _extract_bold_items_from_doc(doc)
+        h = _items_hash(items)
+        if _LAST_BOLD_ITEMS_HASH == h:
+            return
+
+        _LAST_BOLD_ITEMS_HASH = h
+        mirror_html = _bold_items_to_plasma_html(items)
+        if _write_if_changed(bold_widget_path, mirror_html):
+            _inc_ignore(ignore, bold_widget_path, _IGNORE_BURST)
 
     def _from_markdown(
-        self,
-        markdown_path: str,
-        widget_path: str,
-        bold_widget_path: Optional[str],
+        self, markdown_path: str, widget_path: str, bold_widget_path: Optional[str]
     ) -> Optional[IgnoreMap]:
-        md_raw = _read_file_stable(markdown_path)
+        global _LAST_DOC_HASH
+
+        md_raw = _read_file(markdown_path)
         if md_raw == "" and not os.path.exists(markdown_path):
             safe_notify(
                 "md_missing:" + markdown_path,
@@ -964,43 +757,31 @@ class PlasmaSync(AbstractModule):
             )
             return None
 
-        md_norm, plain_norm, items = _normalize_markdown_bold(md_raw)
+        md_norm = _normalize_md(md_raw)
+        doc = _md_to_doc(md_norm)
+        h = _doc_hash(doc)
 
-        changed = _update_md_state(md_norm)
-        _set_plain_state(plain_norm)
-
+        # if semantic doc didn't change, still ensure mirror is up to date
         ignore: IgnoreMap = {}
+        if _LAST_DOC_HASH == h:
+            self._sync_bold_mirror_from_doc(doc, bold_widget_path, ignore)
+            return ignore or None
 
-        # Canonicalize markdown on disk (spaces inside **, etc.)
-        if md_raw.replace("\r\n", "\n").replace("\r", "\n") != md_norm:
-            if _write_if_changed(markdown_path, md_norm):
-                _inc_ignore(ignore, markdown_path, 4)
+        _LAST_DOC_HASH = h
 
-        if not changed and not ignore:
-            return None
+        html_new = _doc_to_plasma_html(doc)
+        if _write_if_changed(widget_path, html_new):
+            _inc_ignore(ignore, widget_path, _IGNORE_BURST)
 
-        main_html = _markdown_to_plasma_html(md_norm)
-        if _write_if_changed(widget_path, main_html):
-            _inc_ignore(ignore, widget_path, 4)
-
-        global _MAIN_BOLD_HASH, _BOLD_NOTE_ITEMS_HASH
-        items_h = _items_hash(items)
-        _MAIN_BOLD_HASH = items_h
-        _BOLD_NOTE_ITEMS_HASH = items_h
-
-        if bold_widget_path:
-            mirror_html = _bold_items_to_plasma_html(items)
-            if _write_if_changed(bold_widget_path, mirror_html):
-                _inc_ignore(ignore, bold_widget_path, 4)
+        # also update bold mirror FROM markdown immediately
+        self._sync_bold_mirror_from_doc(doc, bold_widget_path, ignore)
 
         if ignore:
             logger.info(
-                "Sync Markdown(**bold**) -> MAIN Plasma%s",
-                " + Mirror" if bold_widget_path else "",
+                "Sync todo.md (**bold**) -> MAIN Plasma"
+                + (" + BOLD mirror" if bold_widget_path else "")
             )
         return ignore or None
-
-    # ---------- Flow: MAIN -> Markdown (+ mirror) ----------
 
     def _from_main_plasma(
         self,
@@ -1009,110 +790,79 @@ class PlasmaSync(AbstractModule):
         bold_widget_path: Optional[str],
         html_path: str,
     ) -> Optional[IgnoreMap]:
+        global _LAST_DOC_HASH
+
         if not os.path.exists(html_path):
-            logger.debug("Plasma widget html not found (ignored): %s", html_path)
             return None
 
-        html_raw = _read_file_stable(html_path)
-        if not html_raw:
-            return None
-
-        # Avoid reacting to partial writes that can temporarily drop bold.
-        if not _looks_like_complete_html(html_raw):
-            logger.debug("MAIN html looks incomplete; skipping this event.")
-            return None
-
-        md_norm, plain_norm, items = _main_html_to_markdown_and_items(html_raw)
-
-        changed = _update_md_state(md_norm)
-        _set_plain_state(plain_norm)
+        html_raw = _read_file(html_path)
+        doc = _html_to_doc(html_raw)
+        h = _doc_hash(doc)
 
         ignore: IgnoreMap = {}
 
-        # MAIN -> Markdown (canonical)
-        if _write_if_changed(markdown_path, md_norm):
-            _inc_ignore(ignore, markdown_path, 4)
+        # update markdown only if semantic doc changed
+        if _LAST_DOC_HASH != h:
+            _LAST_DOC_HASH = h
+            md_out = _doc_to_md(doc)
+            if _write_if_changed(markdown_path, md_out):
+                _inc_ignore(ignore, markdown_path, _IGNORE_BURST)
 
-        global _MAIN_BOLD_HASH, _BOLD_NOTE_ITEMS_HASH
-        items_h = _items_hash(items)
+        # always keep mirror aligned with MAIN
+        self._sync_bold_mirror_from_doc(doc, bold_widget_path, ignore)
 
-        # MAIN -> Mirror (if configured)
-        if bold_widget_path:
-            if _MAIN_BOLD_HASH != items_h or _BOLD_NOTE_ITEMS_HASH != items_h:
-                mirror_html = _bold_items_to_plasma_html(items)
-                if _write_if_changed(bold_widget_path, mirror_html):
-                    _inc_ignore(ignore, bold_widget_path, 4)
-                _BOLD_NOTE_ITEMS_HASH = items_h
-
-        _MAIN_BOLD_HASH = items_h
-
-        if ignore or changed:
+        if ignore:
             logger.info(
-                "Sync MAIN Plasma -> Markdown%s",
-                " + Mirror" if bold_widget_path else "",
+                "Sync MAIN Plasma -> todo.md (with **bold**)"
+                + (" + BOLD mirror" if bold_widget_path else "")
             )
         return ignore or None
 
-    # ---------- Flow: Mirror -> MAIN -> Markdown ----------
-
     def _from_bold_mirror(
-        self,
-        widget_path: str,
-        markdown_path: str,
-        bold_widget_path: Optional[str],
+        self, widget_path: str, markdown_path: str, bold_widget_path: Optional[str]
     ) -> Optional[IgnoreMap]:
-        if not bold_widget_path:
+        """
+        Optional: editing mirror updates MAIN bold lines.
+        Mirror contains one line per bold-line in MAIN (line-safe mapping).
+        """
+        if not bold_widget_path or not os.path.exists(bold_widget_path):
             return None
 
-        if not os.path.exists(bold_widget_path):
-            logger.debug("Bold mirror not found (ignored): %s", bold_widget_path)
-            return None
+        global _LAST_BOLD_ITEMS_HASH, _LAST_DOC_HASH
 
-        bold_html_raw = _read_file_stable(bold_widget_path)
-        if not bold_html_raw:
-            return None
-
-        bold_text = _html_to_text(bold_html_raw)
-        items = [ln.strip() for ln in bold_text.splitlines() if ln.strip()]
-
-        global _BOLD_NOTE_ITEMS_HASH, _MAIN_BOLD_HASH
+        mirror_html = _read_file(bold_widget_path)
+        items = _mirror_html_to_items(mirror_html)
         items_h = _items_hash(items)
-        if _BOLD_NOTE_ITEMS_HASH == items_h:
+        if _LAST_BOLD_ITEMS_HASH == items_h:
             return None
-        _BOLD_NOTE_ITEMS_HASH = items_h
+        _LAST_BOLD_ITEMS_HASH = items_h
 
-        main_html_raw = _read_file_stable(widget_path)
-        if not main_html_raw:
-            return None
-        if not _looks_like_complete_html(main_html_raw):
-            logger.debug("MAIN html looks incomplete; skipping mirror->main update.")
-            return None
+        main_html = _read_file(widget_path)
+        main_doc = _html_to_doc(main_html)
 
-        main_lines = _plasma_html_to_boldaware_lines(main_html_raw)
-        new_lines = _replace_bold_items_in_lines(main_lines, items)
-        new_main_html = _boldaware_lines_to_plasma_html(new_lines)
+        new_doc = _apply_mirror_items_to_doc(main_doc, items)
+        new_h = _doc_hash(new_doc)
 
         ignore: IgnoreMap = {}
 
-        if _write_if_changed(widget_path, new_main_html):
-            _inc_ignore(ignore, widget_path, 4)
+        if _LAST_DOC_HASH != new_h:
+            _LAST_DOC_HASH = new_h
 
-        # MAIN -> Markdown (canonical with **bold**)
-        md_norm, plain_norm, items2 = _main_html_to_markdown_and_items(new_main_html)
-        _update_md_state(md_norm)
-        _set_plain_state(plain_norm)
+            # write MAIN
+            new_main_html = _doc_to_plasma_html(new_doc)
+            if _write_if_changed(widget_path, new_main_html):
+                _inc_ignore(ignore, widget_path, _IGNORE_BURST)
 
-        if _write_if_changed(markdown_path, md_norm):
-            _inc_ignore(ignore, markdown_path, 4)
+            # write MD
+            new_md = _doc_to_md(new_doc)
+            if _write_if_changed(markdown_path, new_md):
+                _inc_ignore(ignore, markdown_path, _IGNORE_BURST)
 
-        # normalize mirror (keep it in canonical bold-only form)
-        if _write_if_changed(bold_widget_path, _bold_items_to_plasma_html(items2)):
-            _inc_ignore(ignore, bold_widget_path, 4)
-
-        items2_h = _items_hash(items2)
-        _MAIN_BOLD_HASH = items2_h
-        _BOLD_NOTE_ITEMS_HASH = items2_h
+        # normalize mirror itself
+        norm_mirror = _bold_items_to_plasma_html(items)
+        if _write_if_changed(bold_widget_path, norm_mirror):
+            _inc_ignore(ignore, bold_widget_path, _IGNORE_BURST)
 
         if ignore:
-            logger.info("Sync BOLD mirror -> MAIN -> Markdown")
+            logger.info("Sync BOLD mirror -> MAIN -> todo.md")
         return ignore or None
