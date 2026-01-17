@@ -12,7 +12,7 @@ from lucy_notes_manager.modules.abstract_module import (
 
 
 class TodoFormatter(AbstractModule):
-    name: str = "todo"
+    name: str = "todo_formatter"
     priority: int = 10
 
     template: Template = [

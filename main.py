@@ -10,16 +10,17 @@ from lucy_notes_manager.module_manager import ModuleManager
 from lucy_notes_manager.modules.abstract_module import AbstractModule
 from lucy_notes_manager.modules.banner import Banner
 from lucy_notes_manager.modules.cmd import Cmd
+from lucy_notes_manager.modules.git import Git
 from lucy_notes_manager.modules.plasma_sync import PlasmaSync
 from lucy_notes_manager.modules.renamer import Renamer
-from lucy_notes_manager.modules.sys_info import SysInfo
+from lucy_notes_manager.modules.sys import Sys
 from lucy_notes_manager.modules.todo_formatter import TodoFormatter
 
 TEMPLATE_STARTUP_ARGS: Template = [
     (
         "--sys-config-path",
         str,
-        "config.txt",
+        ["config.txt"],
         "Path to the config file. Default: config.txt",
     ),
     (
@@ -52,9 +53,10 @@ MODULES: List[AbstractModule] = [
     Banner(),
     Renamer(),
     TodoFormatter(),
-    SysInfo(),
+    Sys(),
+    Git(),
     PlasmaSync(),
-    Cmd(),
+    # Cmd(),
 ]
 
 config, unknown_args = setup_config_and_cli_args(template=TEMPLATE_STARTUP_ARGS)
@@ -72,6 +74,10 @@ logging.basicConfig(
 
 if not config.get("sys_notes_dirs"):
     raise ValueError("No --sys-notes-dirs was setuped")
+if "/path/to/note/dir" in config["sys_notes_dirs"]:
+    raise Exception(
+        "--sys-notes-dirs: '/path/to/note/dir' is not a valid path. Please edit your config."
+    )
 
 observer = Observer()
 

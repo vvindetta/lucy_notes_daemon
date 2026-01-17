@@ -12,7 +12,7 @@ from lucy_notes_manager.modules.abstract_module import (
 )
 
 
-class SysInfo(AbstractModule):
+class Sys(AbstractModule):
     name: str = "sys"
     priority: int = 0
 
