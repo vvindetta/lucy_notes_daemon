@@ -54,8 +54,8 @@ MODULES: List[AbstractModule] = [
     Renamer(),
     TodoFormatter(),
     Sys(),
-    Git(),
-    PlasmaSync(),
+    # Git(),
+    # PlasmaSync(),
     # Cmd(),
 ]
 
