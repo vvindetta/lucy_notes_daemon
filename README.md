@@ -91,3 +91,22 @@ python3 main.py
 ```
 
 
+## Modules
+
+To add new modules, you need to edit the list in `main.py`.
+Hot reload and install/uninstall commands are in the roadmap. Sorry.
+
+### List of available modules
+
+**Basic:**
+- `sys`: runtime information, man(ual) messages
+- `todo_formatter`: format points to Markdown-style checkboxes  
+  `- point` → `- [ ] point`
+- `banner`: prints an ASCII banner with the current date or custom text
+- `renamer`: renames a file using `--r name`
+
+**Experimental (disabled by default):**
+- `git`: auto commit, pull, push, etc.
+- `plasma_sync`: sync KDE Plasma widgets ([see video](plasma_sync.mp4))
+- `cmd`: run a terminal command with `--c command`.  
+  Cmd module may cause security issues when used with the `git`.
