@@ -211,13 +211,15 @@ def _md_to_doc(md_text: str) -> List[DocLine]:
             lines.append(DocLine(kind="p", state=None, segs=[]))
             continue
 
-        # checkbox list item
         low = ln.lstrip()
+
+        # checkbox list item
         if low.startswith("- [ ] "):
             content = low[len("- [ ] ") :]
             segs = _md_line_to_segs(content)
             lines.append(DocLine(kind="li", state="unchecked", segs=segs))
             continue
+
         if low.lower().startswith("- [x] "):
             content = low[6:]
             segs = _md_line_to_segs(content)
@@ -238,6 +240,10 @@ def _md_to_doc(md_text: str) -> List[DocLine]:
 
 
 def _doc_to_md(doc: List[DocLine]) -> str:
+    """
+    Important: in PLAIN widget mode, list-like text stays as text in paragraphs.
+    So we only prepend "- [ ] / - [x]" when kind == "li".
+    """
     out_lines: List[str] = []
     for dl in doc:
         if dl.kind == "p":
@@ -256,63 +262,6 @@ def _doc_to_md(doc: List[DocLine]) -> str:
 
 def _doc_hash(doc: List[DocLine]) -> str:
     return _hash_text(_doc_to_md(doc))
-
-
-# ---------------- Plain-text checkbox lifting (HTML -> Doc) ---------------- #
-
-
-def _drop_prefix_from_segs(
-    segs: List[Tuple[str, bool]], n: int
-) -> List[Tuple[str, bool]]:
-    if n <= 0:
-        return segs[:]
-    out: List[Tuple[str, bool]] = []
-    left = n
-    for t, b in segs:
-        if left <= 0:
-            out.append((t, b))
-            continue
-        if len(t) <= left:
-            left -= len(t)
-            continue
-        out.append((t[left:], b))
-        left = 0
-    return _merge_segs(out)
-
-
-def _doc_lift_text_checkboxes(doc: List[DocLine]) -> List[DocLine]:
-    """
-    Converts paragraphs that START with:
-      - [ ]  -> li unchecked
-      - [x]  -> li checked
-      -      -> li (no state)
-    So plain-mode widget editing keeps semantic list state.
-    """
-    out: List[DocLine] = []
-    for dl in doc:
-        if dl.kind != "p":
-            out.append(dl)
-            continue
-
-        plain = _segs_plain(dl.segs)
-        if plain.startswith("- [ ] "):
-            segs = _drop_prefix_from_segs(dl.segs, len("- [ ] "))
-            out.append(DocLine(kind="li", state="unchecked", segs=segs))
-            continue
-
-        if plain.startswith("- [x] ") or plain.startswith("- [X] "):
-            segs = _drop_prefix_from_segs(dl.segs, len("- [x] "))
-            out.append(DocLine(kind="li", state="checked", segs=segs))
-            continue
-
-        if plain.startswith("- "):
-            segs = _drop_prefix_from_segs(dl.segs, len("- "))
-            out.append(DocLine(kind="li", state=None, segs=segs))
-            continue
-
-        out.append(dl)
-
-    return out
 
 
 # ---------------- Plasma HTML parsing (bold-aware + list-aware) ---------------- #
@@ -488,6 +437,7 @@ class _PlasmaDocParser(HTMLParser):
 
     def get_doc(self) -> List[DocLine]:
         self._finalize()
+
         doc = self._doc[:]
         while doc and doc[0].kind == "p" and _segs_plain(doc[0].segs).strip() == "":
             doc.pop(0)
@@ -499,16 +449,19 @@ class _PlasmaDocParser(HTMLParser):
 def _html_to_doc(html_src: str) -> List[DocLine]:
     p = _PlasmaDocParser()
     p.feed(html_src)
-    doc = p.get_doc()
-    # lift "- [ ] ..." / "- ..." text paragraphs into semantic list items (plain mode)
-    doc = _doc_lift_text_checkboxes(doc)
-    return doc
+    return p.get_doc()
 
 
 # ---------------- Plasma HTML generation (from doc) ---------------- #
 
 
 def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
+    """
+    css_style=True  -> real UL/LI + CSS marker checkbox glyphs (☐/☒).
+    css_style=False -> NO UL/LI. Everything is rendered as plain <p> lines:
+                       "- something", "- [ ] something", "- [x] something".
+                       This guarantees: no ☒ ☐ and no list bullets.
+    """
     header = (
         '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" '
         '"http://www.w3.org/TR/REC-html40/strict.dtd">\n'
@@ -544,8 +497,8 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
 
     parts: List[str] = []
 
-    # PLAIN MODE: no UL/LI at all -> no bullets, no checkbox glyphs.
     if not css_style:
+        # Plain mode: render list items as text lines, keep "- / - [ ] / - [x]" literally.
         for dl in doc:
             if dl.kind == "li":
                 if dl.state == "unchecked":
@@ -558,6 +511,7 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
                 parts.append(f'<p style="{base_style}">{inner}</p>\n')
                 continue
 
+            # paragraph
             if _segs_plain(dl.segs).strip() == "":
                 parts.append(
                     f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n'
@@ -568,7 +522,7 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
 
         return header + "".join(parts) + "</body></html>\n"
 
-    # CSS MODE: real lists + marker CSS.
+    # CSS mode: real list structure + checkbox marker CSS
     in_ul = False
     for dl in doc:
         if dl.kind == "li":
@@ -608,6 +562,17 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
 
 
 def _extract_bold_items_from_doc(doc: List[DocLine]) -> List[str]:
+    """
+    Mirror rule (as you want now):
+    - DO NOT cut "-", "- [ ]", "- [x]".
+    - Mirror shows the visible bold text as-is.
+
+    How it works:
+    - For paragraph lines: take bold fragments.
+    - For list-item lines: also take bold fragments (without adding/removing prefixes).
+      (If you made the whole line bold in plain mode, prefix is inside the text already,
+       because it was edited as text inside <p>, so it will appear in mirror.)
+    """
     items: List[str] = []
     for dl in doc:
         buf = [t for (t, b) in dl.segs if b and t]
@@ -629,7 +594,7 @@ def _bold_items_to_plasma_html(items: List[str]) -> str:
         for it in items
         if it.strip()
     ]
-    # mirror never needs checkbox CSS
+    # mirror always plain (no checkbox glyphs)
     return _doc_to_plasma_html(doc, css_style=False)
 
 
@@ -652,6 +617,10 @@ def _apply_mirror_items_to_doc(
     - we replace the whole line content with that item (fully bold), preserving line kind/state
     - if mirror has more items, append them as new bold paragraphs
     - if mirror has fewer, we keep remaining bold lines unchanged (no data loss)
+
+    NOTE: This mapping is unchanged. If you want prefixes like "- [ ]" to be editable
+    through mirror as well, the prefix must be part of the bold text in MAIN (plain mode),
+    or you must switch to css_style=True and accept checkbox glyphs.
     """
     cleaned = [it.strip() for it in items if it.strip()]
     out: List[DocLine] = []
@@ -719,9 +688,8 @@ def _ensure_widget_render_mode(
 ) -> None:
     """
     If config flag changed, rewrite the widget HTML into:
-      - css_style=True  -> real <ul>/<li> + marker CSS
-      - css_style=False -> plain <p> lines with textual prefixes (- / - [ ] / - [x])
-    This guarantees no ☒/☐ glyphs when css_style=False.
+      - css_style=True  -> real <ul>/<li> + marker CSS (☐/☒)
+      - css_style=False -> plain <p> lines with literal "- / - [ ] / - [x]"
     """
     global _LAST_CSS_STYLE
 
@@ -772,7 +740,8 @@ class PlasmaSync(AbstractModule):
             "--plasma-css-style",
             bool,
             False,
-            "Enable CSS checkbox markers for Plasma HTML (li.*::marker). Default: False.",
+            "If True: use CSS checkbox markers (☐/☒) via li.*::marker and real UL/LI. "
+            "If False (default): render plain text only (no glyphs, no bullets).",
         ),
     ]
 
@@ -838,7 +807,6 @@ class PlasmaSync(AbstractModule):
         bold_widget_path = one_value(
             "plasma_bold_widget_path", "--plasma-bold-widget-path", False
         )
-
         css_style = bool_value(["plasma_css_style", "plasma-css-style"], default=False)
 
         return widget_path or "", markdown_path or "", bold_widget_path, css_style
@@ -865,11 +833,7 @@ class PlasmaSync(AbstractModule):
 
         if path == widget_abs:
             return self._from_main_plasma(
-                widget_path,
-                markdown_path,
-                bold_widget_path,
-                css_style,
-                html_path=path,
+                widget_path, markdown_path, bold_widget_path, css_style, html_path=path
             )
 
         return None
@@ -951,7 +915,7 @@ class PlasmaSync(AbstractModule):
 
         ignore: IgnoreMap = {}
 
-        # config toggle enforcement (removes ☒/☐ by rewriting to plain <p> mode)
+        # config toggle enforcement (plain mode removes ☒/☐ by rewriting)
         _ensure_widget_render_mode(widget_path, css_style, ignore)
 
         html_raw = _read_file(html_path)
@@ -964,6 +928,7 @@ class PlasmaSync(AbstractModule):
             if _write_if_changed(markdown_path, md_out):
                 _inc_ignore(ignore, markdown_path, _IGNORE_BURST)
 
+        # always keep mirror aligned with MAIN
         self._sync_bold_mirror_from_doc(doc, bold_widget_path, ignore)
 
         if ignore:
@@ -980,6 +945,10 @@ class PlasmaSync(AbstractModule):
         bold_widget_path: Optional[str],
         css_style: bool,
     ) -> Optional[IgnoreMap]:
+        """
+        Optional: editing mirror updates MAIN bold lines.
+        Mirror contains one line per bold-line in MAIN (line-safe mapping).
+        """
         if not bold_widget_path or not os.path.exists(bold_widget_path):
             return None
 
@@ -1003,19 +972,22 @@ class PlasmaSync(AbstractModule):
         if _LAST_DOC_HASH != new_h:
             _LAST_DOC_HASH = new_h
 
+            # write MAIN
             new_main_html = _doc_to_plasma_html(new_doc, css_style=css_style)
             if _write_if_changed(widget_path, new_main_html):
                 _inc_ignore(ignore, widget_path, _IGNORE_BURST)
 
+            # write MD
             new_md = _doc_to_md(new_doc)
             if _write_if_changed(markdown_path, new_md):
                 _inc_ignore(ignore, markdown_path, _IGNORE_BURST)
 
+        # normalize mirror itself
         norm_mirror = _bold_items_to_plasma_html(items)
         if _write_if_changed(bold_widget_path, norm_mirror):
             _inc_ignore(ignore, bold_widget_path, _IGNORE_BURST)
 
-        # if only config toggled, still enforce widget render mode rewrite
+        # config-only toggle still must rewrite widget
         _ensure_widget_render_mode(widget_path, css_style, ignore)
 
         if ignore:
