@@ -2,6 +2,7 @@ import hashlib
 import html
 import logging
 import os
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
@@ -23,6 +24,7 @@ _INIT_DONE: bool = False
 
 _LAST_DOC_HASH: Optional[str] = None  # canonical doc hash (content + bold + list state)
 _LAST_BOLD_ITEMS_HASH: Optional[str] = None  # mirror items hash
+_LAST_CSS_STYLE: Optional[bool] = None  # last applied --plasma-css-style state
 
 
 # ---------------- IO ---------------- #
@@ -258,6 +260,71 @@ def _doc_hash(doc: List[DocLine]) -> str:
     return _hash_text(_doc_to_md(doc))
 
 
+# ---------------- Checkbox CSS toggling (in-place) ---------------- #
+
+_CHECKBOX_CSS_UNCHECKED = 'li.unchecked::marker { content: "\\2610"; }'
+_CHECKBOX_CSS_CHECKED = 'li.checked::marker { content: "\\2612"; }'
+
+
+def _apply_checkbox_marker_css(html_src: str, enable: bool) -> str:
+    """
+    Enable/disable ONLY the CSS marker rules:
+      - li.unchecked::marker ...
+      - li.checked::marker ...
+    Keeps the rest of the HTML intact (no body reformat).
+    """
+    m = re.search(
+        r'(<style[^>]*type="text/css"[^>]*>\s*)(.*?)(\s*</style>)',
+        html_src,
+        flags=re.I | re.S,
+    )
+    if not m:
+        return html_src
+
+    pre, css, post = m.group(1), m.group(2), m.group(3)
+    lines = css.splitlines()
+
+    # remove existing marker rules (any variant/spacing)
+    cleaned: List[str] = []
+    for ln in lines:
+        if "li.unchecked::marker" in ln:
+            continue
+        if "li.checked::marker" in ln:
+            continue
+        cleaned.append(ln)
+
+    if enable:
+        cleaned.append(_CHECKBOX_CSS_UNCHECKED)
+        cleaned.append(_CHECKBOX_CSS_CHECKED)
+
+    new_block = pre + "\n".join(cleaned) + post
+    return html_src[: m.start()] + new_block + html_src[m.end() :]
+
+
+def _ensure_widget_checkbox_css(
+    widget_path: str, css_style: bool, ignore: IgnoreMap
+) -> None:
+    """
+    If config flag changed, patch only the <style> block in the widget HTML
+    to add/remove marker rules. This runs even when semantic doc didn't change.
+    """
+    global _LAST_CSS_STYLE
+
+    if _LAST_CSS_STYLE is not None and _LAST_CSS_STYLE == css_style:
+        return
+
+    html_raw = _read_file(widget_path)
+    if not html_raw.strip():
+        _LAST_CSS_STYLE = css_style
+        return
+
+    html_new = _apply_checkbox_marker_css(html_raw, css_style)
+    if _write_if_changed(widget_path, html_new):
+        _inc_ignore(ignore, widget_path, _IGNORE_BURST)
+
+    _LAST_CSS_STYLE = css_style
+
+
 # ---------------- Plasma HTML parsing (bold-aware + list-aware) ---------------- #
 
 
@@ -349,8 +416,6 @@ class _PlasmaDocParser(HTMLParser):
             return
 
         if tag == "br":
-            # treat as newline only when we are in a paragraph line (rare in Qt output)
-            # in empty paragraphs Qt uses <br />, which we keep as empty segs -> blank line.
             return
 
         if tag in ("b", "strong"):
@@ -427,13 +492,10 @@ class _PlasmaDocParser(HTMLParser):
             return
         if self._cur is None and data.strip() == "":
             return
-        # decode entities if any
         text = html.unescape(data)
-        # Qt often outputs whitespace between tags; ignore if we're not inside a line
         if self._cur is None and text.strip() == "":
             return
         if self._cur is None:
-            # default to paragraph if text exists without explicit <p> (rare)
             self._ensure_cur("p", None)
         self._append(text)
 
@@ -458,7 +520,7 @@ def _html_to_doc(html_src: str) -> List[DocLine]:
 # ---------------- Plasma HTML generation (from doc) ---------------- #
 
 
-def _doc_to_plasma_html(doc: List[DocLine]) -> str:
+def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
     header = (
         '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" '
         '"http://www.w3.org/TR/REC-html40/strict.dtd">\n'
@@ -467,8 +529,12 @@ def _doc_to_plasma_html(doc: List[DocLine]) -> str:
         '<style type="text/css">\n'
         "p, li { white-space: pre-wrap; }\n"
         "hr { height: 1px; border-width: 0; }\n"
-        'li.unchecked::marker { content: "\\2610"; }\n'
-        'li.checked::marker { content: "\\2612"; }\n'
+        + (
+            'li.unchecked::marker { content: "\\2610"; }\n'
+            'li.checked::marker { content: "\\2612"; }\n'
+            if css_style
+            else ""
+        )
         "</style></head>"
         "<body style=\" font-family:'Noto Sans'; font-size:10pt; "
         'font-weight:400; font-style:normal;">\n'
@@ -483,9 +549,7 @@ def _doc_to_plasma_html(doc: List[DocLine]) -> str:
         inner: List[str] = []
         for t, b in _merge_segs(segs):
             safe = html.escape(t, quote=False)
-            inner.append(
-                f'<span style=" font-weight:600;">{safe}</span>' if b else safe
-            )
+            inner.append(f'<span style=" font-weight:600;">{safe}</span>' if b else safe)
         return "".join(inner)
 
     parts: List[str] = []
@@ -547,13 +611,13 @@ def _items_hash(items: List[str]) -> str:
 
 
 def _bold_items_to_plasma_html(items: List[str]) -> str:
-    # each line is fully bold in the mirror
+    # each line is fully bold in the mirror; no checkbox marker CSS needed
     doc = [
         DocLine(kind="p", state=None, segs=[(it.strip(), True)])
         for it in items
         if it.strip()
     ]
-    return _doc_to_plasma_html(doc)
+    return _doc_to_plasma_html(doc, css_style=False)
 
 
 def _mirror_html_to_items(mirror_html: str) -> List[str]:
@@ -605,7 +669,7 @@ def _apply_mirror_items_to_doc(
 def _init_from_disk_once(
     widget_path: str, markdown_path: str, bold_widget_path: Optional[str]
 ) -> None:
-    global _INIT_DONE, _LAST_DOC_HASH, _LAST_BOLD_ITEMS_HASH
+    global _INIT_DONE, _LAST_DOC_HASH, _LAST_BOLD_ITEMS_HASH, _LAST_CSS_STYLE
     if _INIT_DONE:
         return
     _INIT_DONE = True
@@ -613,6 +677,9 @@ def _init_from_disk_once(
     widget_path = _rpath(widget_path)
     markdown_path = _rpath(markdown_path)
     bold_widget_path = _rpath(bold_widget_path) if bold_widget_path else None
+
+    # reset css-style tracking on startup (unknown until first handle)
+    _LAST_CSS_STYLE = None
 
     # prefer markdown as canonical at boot if it exists
     md = _read_file(markdown_path)
@@ -660,6 +727,12 @@ class PlasmaSync(AbstractModule):
             None,
             "Path to the Markdown note (supports **bold** and - [ ] / - [x]).",
         ),
+        (
+            "--plasma-css-style",
+            bool,
+            False,
+            "Enable CSS checkbox markers for Plasma HTML (li.*::marker). Default: False.",
+        ),
     ]
 
     def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
@@ -674,7 +747,7 @@ class PlasmaSync(AbstractModule):
     def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def _cfg(self, ctx: Context) -> tuple[str, str, Optional[str]]:
+    def _cfg(self, ctx: Context) -> tuple[str, str, Optional[str], bool]:
         cfg = ctx.config
 
         def one_value(key: str, flag: str, required: bool) -> Optional[str]:
@@ -693,6 +766,31 @@ class PlasmaSync(AbstractModule):
                 raise ValueError(f"PlasmaSync: invalid value for {flag}")
             return _rpath(val)
 
+        def bool_value(keys: List[str], default: bool) -> bool:
+            # supports both plasma_css_style and plasma-css-style
+            v = None
+            for k in keys:
+                if k in cfg:
+                    v = cfg.get(k)
+                    break
+            if v is None:
+                return default
+            if isinstance(v, list):
+                if len(v) != 1:
+                    raise ValueError("PlasmaSync: --plasma-css-style expects one value")
+                v = v[0]
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, (int, float)):
+                return bool(v)
+            if isinstance(v, str):
+                s = v.strip().lower()
+                if s in ("1", "true", "yes", "y", "on", "enable", "enabled"):
+                    return True
+                if s in ("0", "false", "no", "n", "off", "disable", "disabled"):
+                    return False
+            raise ValueError("PlasmaSync: invalid value for --plasma-css-style")
+
         widget_path = one_value("plasma_widget_path", "--plasma-widget-path", True)
         markdown_path = one_value(
             "plasma_markdown_note_path", "--plasma-markdown-note-path", True
@@ -701,10 +799,12 @@ class PlasmaSync(AbstractModule):
             "plasma_bold_widget_path", "--plasma-bold-widget-path", False
         )
 
-        return widget_path or "", markdown_path or "", bold_widget_path
+        css_style = bool_value(["plasma_css_style", "plasma-css-style"], default=False)
+
+        return widget_path or "", markdown_path or "", bold_widget_path, css_style
 
     def _handle(self, ctx: Context) -> Optional[IgnoreMap]:
-        widget_path, markdown_path, bold_widget_path = self._cfg(ctx)
+        widget_path, markdown_path, bold_widget_path, css_style = self._cfg(ctx)
 
         _init_from_disk_once(widget_path, markdown_path, bold_widget_path)
 
@@ -714,14 +814,22 @@ class PlasmaSync(AbstractModule):
         bold_abs = _rpath(bold_widget_path) if bold_widget_path else None
 
         if path == md_abs:
-            return self._from_markdown(markdown_path, widget_path, bold_widget_path)
+            return self._from_markdown(
+                markdown_path, widget_path, bold_widget_path, css_style
+            )
 
         if bold_abs and path == bold_abs:
-            return self._from_bold_mirror(widget_path, markdown_path, bold_widget_path)
+            return self._from_bold_mirror(
+                widget_path, markdown_path, bold_widget_path, css_style
+            )
 
         if path == widget_abs:
             return self._from_main_plasma(
-                widget_path, markdown_path, bold_widget_path, html_path=path
+                widget_path,
+                markdown_path,
+                bold_widget_path,
+                css_style,
+                html_path=path,
             )
 
         return None
@@ -745,7 +853,11 @@ class PlasmaSync(AbstractModule):
             _inc_ignore(ignore, bold_widget_path, _IGNORE_BURST)
 
     def _from_markdown(
-        self, markdown_path: str, widget_path: str, bold_widget_path: Optional[str]
+        self,
+        markdown_path: str,
+        widget_path: str,
+        bold_widget_path: Optional[str],
+        css_style: bool,
     ) -> Optional[IgnoreMap]:
         global _LAST_DOC_HASH
 
@@ -761,15 +873,17 @@ class PlasmaSync(AbstractModule):
         doc = _md_to_doc(md_norm)
         h = _doc_hash(doc)
 
-        # if semantic doc didn't change, still ensure mirror is up to date
         ignore: IgnoreMap = {}
+
+        # If semantic doc didn't change, still enforce css marker rules toggle
         if _LAST_DOC_HASH == h:
+            _ensure_widget_checkbox_css(widget_path, css_style, ignore)
             self._sync_bold_mirror_from_doc(doc, bold_widget_path, ignore)
             return ignore or None
 
         _LAST_DOC_HASH = h
 
-        html_new = _doc_to_plasma_html(doc)
+        html_new = _doc_to_plasma_html(doc, css_style=css_style)
         if _write_if_changed(widget_path, html_new):
             _inc_ignore(ignore, widget_path, _IGNORE_BURST)
 
@@ -788,6 +902,7 @@ class PlasmaSync(AbstractModule):
         widget_path: str,
         markdown_path: str,
         bold_widget_path: Optional[str],
+        css_style: bool,
         html_path: str,
     ) -> Optional[IgnoreMap]:
         global _LAST_DOC_HASH
@@ -795,11 +910,14 @@ class PlasmaSync(AbstractModule):
         if not os.path.exists(html_path):
             return None
 
+        ignore: IgnoreMap = {}
+
+        # Enforce checkbox marker CSS toggle on the widget file itself (style block only).
+        _ensure_widget_checkbox_css(widget_path, css_style, ignore)
+
         html_raw = _read_file(html_path)
         doc = _html_to_doc(html_raw)
         h = _doc_hash(doc)
-
-        ignore: IgnoreMap = {}
 
         # update markdown only if semantic doc changed
         if _LAST_DOC_HASH != h:
@@ -819,7 +937,11 @@ class PlasmaSync(AbstractModule):
         return ignore or None
 
     def _from_bold_mirror(
-        self, widget_path: str, markdown_path: str, bold_widget_path: Optional[str]
+        self,
+        widget_path: str,
+        markdown_path: str,
+        bold_widget_path: Optional[str],
+        css_style: bool,
     ) -> Optional[IgnoreMap]:
         """
         Optional: editing mirror updates MAIN bold lines.
@@ -849,7 +971,7 @@ class PlasmaSync(AbstractModule):
             _LAST_DOC_HASH = new_h
 
             # write MAIN
-            new_main_html = _doc_to_plasma_html(new_doc)
+            new_main_html = _doc_to_plasma_html(new_doc, css_style=css_style)
             if _write_if_changed(widget_path, new_main_html):
                 _inc_ignore(ignore, widget_path, _IGNORE_BURST)
 
@@ -862,6 +984,9 @@ class PlasmaSync(AbstractModule):
         norm_mirror = _bold_items_to_plasma_html(items)
         if _write_if_changed(bold_widget_path, norm_mirror):
             _inc_ignore(ignore, bold_widget_path, _IGNORE_BURST)
+
+        # Also ensure checkbox marker CSS toggle is applied if only config changed.
+        _ensure_widget_checkbox_css(widget_path, css_style, ignore)
 
         if ignore:
             logger.info("Sync BOLD mirror -> MAIN -> todo.md")
