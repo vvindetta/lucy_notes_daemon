@@ -524,20 +524,20 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
     header = (
         '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" '
         '"http://www.w3.org/TR/REC-html40/strict.dtd">\n'
-        '<html><head><meta name="qrichtext" content="1" />'
-        '<meta charset="utf-8" />'
-        '<style type="text/css">\n'
-        "p, li { white-space: pre-wrap; }\n"
-        "hr { height: 1px; border-width: 0; }\n"
+        + '<html><head><meta name="qrichtext" content="1" />'
+        + '<meta charset="utf-8" />'
+        + '<style type="text/css">\n'
+        + "p, li { white-space: pre-wrap; }\n"
+        + "hr { height: 1px; border-width: 0; }\n"
         + (
             'li.unchecked::marker { content: "\\2610"; }\n'
             'li.checked::marker { content: "\\2612"; }\n'
             if css_style
             else ""
         )
-        "</style></head>"
-        "<body style=\" font-family:'Noto Sans'; font-size:10pt; "
-        'font-weight:400; font-style:normal;">\n'
+        + "</style></head>"
+        + "<body style=\" font-family:'Noto Sans'; font-size:10pt; "
+        + 'font-weight:400; font-style:normal;">\n'
     )
 
     base_style = (
@@ -549,7 +549,9 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
         inner: List[str] = []
         for t, b in _merge_segs(segs):
             safe = html.escape(t, quote=False)
-            inner.append(f'<span style=" font-weight:600;">{safe}</span>' if b else safe)
+            inner.append(
+                f'<span style=" font-weight:600;">{safe}</span>' if b else safe
+            )
         return "".join(inner)
 
     parts: List[str] = []
@@ -568,11 +570,9 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
                 cls = ' class="checked"'
 
             inner = segs_to_inner(dl.segs)
-            # keep per-item paragraph style for consistent margins
             parts.append(f'<li{cls}><p style="{base_style}">{inner}</p></li>\n')
             continue
 
-        # paragraph
         if in_ul:
             parts.append("</ul>\n")
             in_ul = False
