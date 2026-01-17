@@ -1,3 +1,5 @@
+![lucy.png](lucy.png)
+
 # Lucy daemon is modular notes manager.
 
 Your notes are just files. Use any editor you like. No editor plugins. Git is your cloud.
