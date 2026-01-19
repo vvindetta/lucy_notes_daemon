@@ -1,4 +1,4 @@
-![lucy.png](lucy.png)
+![lucy.png](media/lucy.png)
 
 # Lucy d(a)emon is modular notes manager
 
@@ -27,7 +27,7 @@ Then press ```CTRL+S``` - Lucy will detect the change and run the modules.
 - Sync notes between formats and programs
 - Git auto-commit
 - Calendar integration
-- Sync your system widgets: [KDE Plasma demo](plasma_sync.mp4)
+- Sync your system widgets: [KDE Plasma demo](media/plasma_sync.mp4)
 - Write your own module!
 
 ### How to sync with mobile?
@@ -107,6 +107,6 @@ Hot reload and install/uninstall commands are in the roadmap. Sorry.
 
 **Experimental (disabled by default):**
 - `git`: auto commit, pull, push, etc.
-- `plasma_sync`: sync KDE Plasma widgets ([see video](plasma_sync.mp4))
+- `plasma_sync`: sync KDE Plasma widgets ([see video](media/plasma_sync.mp4))
 - `cmd`: run a terminal command with `--c command`.  
   Cmd module may cause security issues when used with the `git`.

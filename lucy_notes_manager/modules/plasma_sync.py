@@ -491,7 +491,7 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
         for t, b in _merge_segs(segs):
             safe = html.escape(t, quote=False)
             inner.append(
-                f'<span style=" font-weight:600;">{safe}</span>' if b else safe
+                f'<span style=" font-weight:700;">{safe}</span>' if b else safe
             )
         return "".join(inner)
 
