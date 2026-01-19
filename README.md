@@ -90,6 +90,7 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
+**Turn on file auto-update in your text editor!**
 
 ## Modules
 
