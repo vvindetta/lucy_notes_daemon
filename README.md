@@ -107,7 +107,7 @@ Hot reload and install/uninstall commands are in the roadmap. Sorry.
 - `renamer`: renames a file using `--r name`
 
 **Experimental (disabled by default):**
-- `git`: auto commit, pull, push, etc.
+- `git`: auto commit, pull, push, etc. Please install GIT cli. 
 - `plasma_sync`: sync KDE Plasma widgets ([see video](media/plasma_sync.mp4))
 - `cmd`: run a terminal command with `--c command`.  
   Cmd module may cause security issues when used with the `git`.
