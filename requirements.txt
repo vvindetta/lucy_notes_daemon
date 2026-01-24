@@ -1,2 +1,3 @@
 watchdog
 pyfiglet
+notify-py

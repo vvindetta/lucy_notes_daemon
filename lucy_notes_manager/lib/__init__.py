@@ -1,10 +1,13 @@
 import os
-import subprocess
 import time
 from typing import Dict, List
 
+from notifypy import Notify
+
 _NOTIFY_LAST: Dict[str, float] = {}
 _NOTIFY_MIN_INTERVAL_SEC = 10.0
+
+notifypy = Notify()
 
 
 def safe_notify(name: str, message: str) -> None:
@@ -24,16 +27,13 @@ def safe_notify(name: str, message: str) -> None:
 
 def notify(message: str, title: str = "Lucy Note Manager") -> None:
     """
-    Send desktop notification via notify-send.
-    Fails silently if notify-send is unavailable.
+    Send a desktop notification via notify-py.
+    Fails silently if notify-py (or its backend) is unavailable.
     """
-    try:
-        subprocess.run(
-            ["notify-send", title, message],
-            check=False,
-        )
-    except Exception:
-        pass
+
+    notifypy.title = title
+    notifypy.message = message
+    notifypy.send()
 
 
 def slow_write_lines_from(
