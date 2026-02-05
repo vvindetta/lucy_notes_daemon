@@ -39,13 +39,15 @@ def _read_file(path: str) -> str:
             return f.read()
     except FileNotFoundError:
         return ""
-    except PermissionError as e:
-        logger.error("Permission error reading %s: %s", path, e)
-        safe_notify("read_perm:" + path, f"Permission denied reading:\n{path}\n\n{e}")
+    except PermissionError as error:
+        logger.error("Permission error reading %s: %s", path, error)
+        safe_notify(
+            "read_perm:" + path, f"Permission denied reading:\n{path}\n\n{error}"
+        )
         return ""
-    except OSError as e:
-        logger.error("OS error reading %s: %s", path, e)
-        safe_notify("read_os:" + path, f"Failed to read file:\n{path}\n\n{e}")
+    except OSError as error:
+        logger.error("OS error reading %s: %s", path, error)
+        safe_notify("read_os:" + path, f"Failed to read file:\n{path}\n\n{error}")
         return ""
 
 
@@ -59,19 +61,21 @@ def _write_if_changed(path: str, content: str) -> bool:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         return True
-    except PermissionError as e:
-        logger.error("Permission error writing %s: %s", path, e)
-        safe_notify("write_perm:" + path, f"Permission denied writing:\n{path}\n\n{e}")
+    except PermissionError as error:
+        logger.error("Permission error writing %s: %s", path, error)
+        safe_notify(
+            "write_perm:" + path, f"Permission denied writing:\n{path}\n\n{error}"
+        )
         return False
-    except OSError as e:
-        logger.error("OS error writing %s: %s", path, e)
-        safe_notify("write_os:" + path, f"Failed to write file:\n{path}\n\n{e}")
+    except OSError as error:
+        logger.error("OS error writing %s: %s", path, error)
+        safe_notify("write_os:" + path, f"Failed to write file:\n{path}\n\n{error}")
         return False
 
 
 def _inc_ignore(ignore: IgnoreMap, path: str, times: int = 1) -> None:
-    ap = _rpath(path)
-    ignore[ap] = ignore.get(ap, 0) + int(times)
+    absolute_path = _rpath(path)
+    ignore[absolute_path] = ignore.get(absolute_path, 0) + int(times)
 
 
 # ---------------- Hashing / Normalization ---------------- #
@@ -86,7 +90,7 @@ def _normalize_newlines(text: str) -> str:
 
 
 def _trim_trailing_spaces_per_line(text: str) -> str:
-    return "\n".join([ln.rstrip() for ln in _normalize_newlines(text).split("\n")])
+    return "\n".join([line.rstrip() for line in _normalize_newlines(text).split("\n")])
 
 
 def _normalize_md(text: str) -> str:
@@ -105,44 +109,70 @@ class DocLine:
 
 
 def _segs_plain(segs: List[Tuple[str, bool]]) -> str:
-    return "".join(t for t, _b in segs)
+    return "".join(text for text, _is_bold in segs)
 
 
 def _segs_has_bold(segs: List[Tuple[str, bool]]) -> bool:
-    return any(b for _t, b in segs)
+    return any(is_bold for _text, is_bold in segs)
 
 
 def _merge_segs(segs: List[Tuple[str, bool]]) -> List[Tuple[str, bool]]:
     out: List[Tuple[str, bool]] = []
-    for t, b in segs:
-        if not t:
+    for text, is_bold in segs:
+        if not text:
             continue
-        if out and out[-1][1] == b:
-            out[-1] = (out[-1][0] + t, b)
+        if out and out[-1][1] == is_bold:
+            out[-1] = (out[-1][0] + text, is_bold)
         else:
-            out.append((t, b))
+            out.append((text, is_bold))
+    return out
+
+
+# ---------------- Mirror de-duplication ---------------- #
+
+
+def _dedupe_consecutive(items: List[str]) -> List[str]:
+    """
+    Plasma/QTextDocument sometimes keeps duplicated <p> blocks that may be rendered
+    as a single visible line. If we apply mirror->main mapping without de-duping,
+    duplicates spam MAIN with repeated identical lines.
+
+    Rule: remove empty strings and consecutive duplicates after normalize+strip.
+    """
+    out: List[str] = []
+    prev: Optional[str] = None
+
+    for raw in items:
+        normalized = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not normalized:
+            continue
+        if prev is not None and normalized == prev:
+            continue
+        out.append(normalized)
+        prev = normalized
+
     return out
 
 
 # ---------------- Markdown (**bold**) parsing ---------------- #
 
 
-def _find_unescaped_double_stars(s: str) -> List[int]:
-    pos: List[int] = []
-    i = 0
-    while i < len(s) - 1:
-        if s[i] == "\\":
-            i += 2
+def _find_unescaped_double_stars(line: str) -> List[int]:
+    positions: List[int] = []
+    index = 0
+    while index < len(line) - 1:
+        if line[index] == "\\":
+            index += 2
             continue
-        if s[i : i + 2] == "**":
-            pos.append(i)
-            i += 2
+        if line[index : index + 2] == "**":
+            positions.append(index)
+            index += 2
             continue
-        i += 1
+        index += 1
     # if odd, last one is treated as literal
-    if len(pos) % 2 == 1:
-        pos = pos[:-1]
-    return pos
+    if len(positions) % 2 == 1:
+        positions = positions[:-1]
+    return positions
 
 
 def _md_line_to_segs(line: str) -> List[Tuple[str, bool]]:
@@ -155,27 +185,27 @@ def _md_line_to_segs(line: str) -> List[Tuple[str, bool]]:
     segs: List[Tuple[str, bool]] = []
     buf: List[str] = []
     bold = False
-    i = 0
+    index = 0
 
-    while i < len(line):
-        if i in cut and line[i : i + 2] == "**":
+    while index < len(line):
+        if index in cut and line[index : index + 2] == "**":
             txt = "".join(buf)
             if txt:
                 txt = txt.replace("\\*", "*").replace("\\\\", "\\")
                 segs.append((txt, bold))
             buf = []
             bold = not bold
-            i += 2
+            index += 2
             continue
 
-        if line[i] == "\\" and i + 1 < len(line):
+        if line[index] == "\\" and index + 1 < len(line):
             # keep escaped char literally
-            buf.append(line[i + 1])
-            i += 2
+            buf.append(line[index + 1])
+            index += 2
             continue
 
-        buf.append(line[i])
-        i += 1
+        buf.append(line[index])
+        index += 1
 
     txt = "".join(buf)
     if txt:
@@ -184,21 +214,21 @@ def _md_line_to_segs(line: str) -> List[Tuple[str, bool]]:
     return _merge_segs(segs)
 
 
-def _escape_md_text(s: str) -> str:
+def _escape_md_text(text: str) -> str:
     # escape backslash first, then asterisk
-    s = s.replace("\\", "\\\\")
-    s = s.replace("*", "\\*")
-    return s
+    text = text.replace("\\", "\\\\")
+    text = text.replace("*", "\\*")
+    return text
 
 
 def _segs_to_md(segs: List[Tuple[str, bool]]) -> str:
     out: List[str] = []
-    for t, b in segs:
-        t = _escape_md_text(t)
-        if b and t:
-            out.append(f"**{t}**")
+    for text, is_bold in segs:
+        safe = _escape_md_text(text)
+        if is_bold and safe:
+            out.append(f"**{safe}**")
         else:
-            out.append(t)
+            out.append(safe)
     return "".join(out)
 
 
@@ -206,12 +236,12 @@ def _md_to_doc(md_text: str) -> List[DocLine]:
     md_text = _normalize_newlines(md_text)
     lines: List[DocLine] = []
     for raw in md_text.split("\n"):
-        ln = raw.rstrip("\n")
-        if ln.strip() == "":
+        line = raw.rstrip("\n")
+        if line.strip() == "":
             lines.append(DocLine(kind="p", state=None, segs=[]))
             continue
 
-        low = ln.lstrip()
+        low = line.lstrip()
 
         # checkbox list item
         if low.startswith("- [ ] "):
@@ -227,7 +257,7 @@ def _md_to_doc(md_text: str) -> List[DocLine]:
             continue
 
         # normal paragraph
-        segs = _md_line_to_segs(ln)
+        segs = _md_line_to_segs(line)
         lines.append(DocLine(kind="p", state=None, segs=segs))
 
     # trim leading/trailing empty paragraphs
@@ -411,15 +441,15 @@ class _PlasmaDocParser(HTMLParser):
 
         if tag == "span":
             if self._span_bold_stack:
-                was = self._span_bold_stack.pop()
-                if was:
+                was_bold = self._span_bold_stack.pop()
+                if was_bold:
                     self._bold_depth = max(0, self._bold_depth - 1)
             return
 
         if tag == "font":
             if self._font_bold_stack:
-                was = self._font_bold_stack.pop()
-                if was:
+                was_bold = self._font_bold_stack.pop()
+                if was_bold:
                     self._bold_depth = max(0, self._bold_depth - 1)
             return
 
@@ -447,9 +477,9 @@ class _PlasmaDocParser(HTMLParser):
 
 
 def _html_to_doc(html_src: str) -> List[DocLine]:
-    p = _PlasmaDocParser()
-    p.feed(html_src)
-    return p.get_doc()
+    parser = _PlasmaDocParser()
+    parser.feed(html_src)
+    return parser.get_doc()
 
 
 # ---------------- Plasma HTML generation (from doc) ---------------- #
@@ -488,10 +518,12 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
 
     def segs_to_inner(segs: List[Tuple[str, bool]]) -> str:
         inner: List[str] = []
-        for t, b in _merge_segs(segs):
-            safe = html.escape(t, quote=False)
+        for text, is_bold in _merge_segs(segs):
+            safe_text = html.escape(text, quote=False)
             inner.append(
-                f'<span style=" font-weight:700;">{safe}</span>' if b else safe
+                f'<span style=" font-weight:700;">{safe_text}</span>'
+                if is_bold
+                else safe_text
             )
         return "".join(inner)
 
@@ -563,7 +595,7 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
 
 def _extract_bold_items_from_doc(doc: List[DocLine]) -> List[str]:
     """
-    Mirror rule (as you want now):
+    Mirror rule:
     - DO NOT cut "-", "- [ ]", "- [x]".
     - Mirror shows the visible bold text as-is.
 
@@ -575,11 +607,13 @@ def _extract_bold_items_from_doc(doc: List[DocLine]) -> List[str]:
     """
     items: List[str] = []
     for dl in doc:
-        buf = [t for (t, b) in dl.segs if b and t]
-        s = "".join(buf).strip()
-        if s:
-            items.append(s)
-    return items
+        bold_fragments = [text for (text, is_bold) in dl.segs if is_bold and text]
+        joined = "".join(bold_fragments).strip()
+        if joined:
+            items.append(joined)
+
+    # Prevent MAIN->mirror from preserving hidden duplicated lines
+    return _dedupe_consecutive(items)
 
 
 def _items_hash(items: List[str]) -> str:
@@ -605,7 +639,9 @@ def _mirror_html_to_items(mirror_html: str) -> List[str]:
         s = _segs_plain(dl.segs).strip()
         if s:
             items.append(s)
-    return items
+
+    # IMPORTANT: prevent hidden QTextDocument duplicates from spamming MAIN
+    return _dedupe_consecutive(items)
 
 
 def _apply_mirror_items_to_doc(
@@ -618,28 +654,40 @@ def _apply_mirror_items_to_doc(
     - if mirror has more items, append them as new bold paragraphs
     - if mirror has fewer, we keep remaining bold lines unchanged (no data loss)
 
-    NOTE: This mapping is unchanged. If you want prefixes like "- [ ]" to be editable
-    through mirror as well, the prefix must be part of the bold text in MAIN (plain mode),
-    or you must switch to css_style=True and accept checkbox glyphs.
+    NOTE: If you want prefixes like "- [ ]" to be editable through mirror as well,
+    the prefix must be part of the bold text in MAIN (plain mode), or you must switch
+    to css_style=True and accept checkbox glyphs.
     """
     cleaned = [it.strip() for it in items if it.strip()]
+    cleaned = _dedupe_consecutive(cleaned)
+
     out: List[DocLine] = []
-    k = 0
+    index = 0
 
     for dl in main_doc:
         if not _segs_has_bold(dl.segs):
             out.append(dl)
             continue
 
-        if k < len(cleaned):
-            out.append(DocLine(kind=dl.kind, state=dl.state, segs=[(cleaned[k], True)]))
-            k += 1
+        if index < len(cleaned):
+            out.append(
+                DocLine(kind=dl.kind, state=dl.state, segs=[(cleaned[index], True)])
+            )
+            index += 1
         else:
             out.append(dl)
 
-    while k < len(cleaned):
-        out.append(DocLine(kind="p", state=None, segs=[(cleaned[k], True)]))
-        k += 1
+    # Append remaining items as new bold paragraphs; avoid repeating last line
+    while index < len(cleaned):
+        candidate = cleaned[index]
+        if out:
+            last_plain = _segs_plain(out[-1].segs).strip()
+            last_has_bold = _segs_has_bold(out[-1].segs)
+            if last_has_bold and last_plain == candidate:
+                index += 1
+                continue
+        out.append(DocLine(kind="p", state=None, segs=[(candidate, True)]))
+        index += 1
 
     return out
 
@@ -955,7 +1003,7 @@ class PlasmaSync(AbstractModule):
         global _LAST_BOLD_ITEMS_HASH, _LAST_DOC_HASH
 
         mirror_html = _read_file(bold_widget_path)
-        items = _mirror_html_to_items(mirror_html)
+        items = _mirror_html_to_items(mirror_html)  # includes de-dupe
         items_h = _items_hash(items)
         if _LAST_BOLD_ITEMS_HASH == items_h:
             return None
@@ -982,7 +1030,7 @@ class PlasmaSync(AbstractModule):
             if _write_if_changed(markdown_path, new_md):
                 _inc_ignore(ignore, markdown_path, _IGNORE_BURST)
 
-        # normalize mirror itself
+        # normalize mirror itself (also keeps it from accumulating hidden duplicates)
         norm_mirror = _bold_items_to_plasma_html(items)
         if _write_if_changed(bold_widget_path, norm_mirror):
             _inc_ignore(ignore, bold_widget_path, _IGNORE_BURST)
