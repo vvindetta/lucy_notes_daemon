@@ -32,8 +32,7 @@ Then press ```CTRL+S``` - Lucy will detect the change and run the modules.
 - Write your own module!
 
 ### How to sync with mobile?
-Use Lucy's Git module together with [GitSync Android app](https://github.com/ViscousPot/GitSync).
-
+Use Lucy's Git module together with [GitSync Android app](https://github.com/ViscousPot/GitSync) and [Markor](https://github.com/gsantner/markor) text editor.
 
 ## Theory
 
