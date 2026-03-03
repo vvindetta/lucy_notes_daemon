@@ -12,13 +12,14 @@ It could be an execution command or some settings.
 ## Example of use
 If `README.md` is one of your notes, you can write command flags directly inside it:
 
-Send `README.md` by email:
+Rename `README.md` to `DONOTreadme.md`:
 
-```--send vindetta@www.org```
+```--r DONOTreadme.md```
 
-Create a calendar event:
+Execute the terminal command (output will be written directly to the file):
 
-```--event 27.12 "need to finish writing readme"```
+```--c neofetch```
+
 
 Then press ```CTRL+S``` - Lucy will detect the change and run the modules.
 
@@ -65,13 +66,19 @@ You can provide flags in three places:
 * cmd (50)
 ```
 
-```--man man``` for help with any flag argument:
+```--man list``` for list all flag arguments.
+
+`--man flag_arg_here` for help with any flag argument.
+
+```--man man``` :
 
 ```
 * --man: Argument manual. Use: --man list OR --man full OR --man <name> (example: --man todo). (type=str, default=None)
 ```
 
 ## Install
+
+Tested on Fedora GNU+Linux.
 
 1. Clone the repository:
 ```
