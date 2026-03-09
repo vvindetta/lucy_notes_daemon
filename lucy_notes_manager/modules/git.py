@@ -1178,7 +1178,7 @@ class Git(AbstractModule):
         self._push_backoff_seconds[repo_root] = new_backoff
         self._push_next_allowed_at[repo_root] = time.time() + new_backoff
 
-    def on_opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         ctx_path = (
             self._abs(self._to_str(ctx.path)) if getattr(ctx, "path", None) else ""
         )

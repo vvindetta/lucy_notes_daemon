@@ -86,5 +86,5 @@ class AbstractModule(ABC):
     def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def on_opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
