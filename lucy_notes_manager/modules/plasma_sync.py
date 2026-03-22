@@ -653,10 +653,6 @@ def _apply_mirror_items_to_doc(
     - we replace the whole line content with that item (fully bold), preserving line kind/state
     - if mirror has more items, append them as new bold paragraphs
     - if mirror has fewer, we keep remaining bold lines unchanged (no data loss)
-
-    NOTE: If you want prefixes like "- [ ]" to be editable through mirror as well,
-    the prefix must be part of the bold text in MAIN (plain mode), or you must switch
-    to css_style=True and accept checkbox glyphs.
     """
     cleaned = [it.strip() for it in items if it.strip()]
     cleaned = _dedupe_consecutive(cleaned)
@@ -677,16 +673,19 @@ def _apply_mirror_items_to_doc(
         else:
             out.append(dl)
 
-    # Append remaining items as new bold paragraphs; avoid repeating last line
+    # collect all existing bold lines after replacement
+    existing_bold_lines = {
+        _segs_plain(dl.segs).strip()
+        for dl in out
+        if _segs_has_bold(dl.segs) and _segs_plain(dl.segs).strip()
+    }
+
+    # append only truly new items
     while index < len(cleaned):
-        candidate = cleaned[index]
-        if out:
-            last_plain = _segs_plain(out[-1].segs).strip()
-            last_has_bold = _segs_has_bold(out[-1].segs)
-            if last_has_bold and last_plain == candidate:
-                index += 1
-                continue
-        out.append(DocLine(kind="p", state=None, segs=[(candidate, True)]))
+        candidate = cleaned[index].strip()
+        if candidate and candidate not in existing_bold_lines:
+            out.append(DocLine(kind="p", state=None, segs=[(candidate, True)]))
+            existing_bold_lines.add(candidate)
         index += 1
 
     return out
