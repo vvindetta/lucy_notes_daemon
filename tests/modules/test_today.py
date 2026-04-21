@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import os
+import time
+from datetime import datetime
+from pathlib import Path
+
+from watchdog.events import FileModifiedEvent
+
+import lucy_notes_manager.modules.today as today_mod
+from lucy_notes_manager.modules.abstract_module import Context, System
+from lucy_notes_manager.modules.today import Today
+
+
+def _ctx_for(path: Path) -> Context:
+    return Context(
+        path=str(path),
+        config={
+            "today_now_name": ["now.md"],
+            "today_past_name": ["past.md"],
+            "today_idle_hours": [12.0],
+        },
+        arg_lines={},
+    )
+
+
+def _make_stale(path: Path, hours: float) -> None:
+    old = time.time() - (hours * 3600.0)
+    os.utime(path, (old, old))
+
+
+def test_archives_now_md_when_stale_and_clears_source(tmp_path: Path, monkeypatch) -> None:
+    class _FakeDatetime:
+        @classmethod
+        def now(cls):
+            return datetime(2026, 4, 30, 9, 0, 0)
+
+    monkeypatch.setattr(today_mod, "datetime", _FakeDatetime)
+
+    now_path = tmp_path / "now.md"
+    now_path.write_text("something\nmore coffee\n", encoding="utf-8")
+    _make_stale(now_path, 13.0)
+
+    module = Today()
+    ctx = _ctx_for(now_path)
+    system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
+
+    ignore = module.modified(ctx, system)
+
+    past_path = tmp_path / "past.md"
+    assert ignore == {str(now_path.resolve()): 1, str(past_path.resolve()): 1}
+    assert now_path.read_text(encoding="utf-8") == ""
+    assert past_path.read_text(encoding="utf-8") == "-- 30.04\nsomething\nmore coffee\n"
+
+
+def test_does_not_archive_when_file_is_not_stale(tmp_path: Path) -> None:
+    now_path = tmp_path / "now.md"
+    now_path.write_text("keep\n", encoding="utf-8")
+    _make_stale(now_path, 1.0)
+
+    module = Today()
+    ctx = _ctx_for(now_path)
+    system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
+
+    ignore = module.modified(ctx, system)
+
+    assert ignore is None
+    assert now_path.read_text(encoding="utf-8") == "keep\n"
+    assert not (tmp_path / "past.md").exists()
+
+
+def test_appends_to_end_of_past_without_overwrite(tmp_path: Path, monkeypatch) -> None:
+    class _FakeDatetime:
+        @classmethod
+        def now(cls):
+            return datetime(2026, 5, 1, 10, 0, 0)
+
+    monkeypatch.setattr(today_mod, "datetime", _FakeDatetime)
+
+    past_path = tmp_path / "past.md"
+    past_path.write_text("-- 12.04\nsomethiung\n", encoding="utf-8")
+
+    now_path = tmp_path / "now.md"
+    now_path.write_text("more coffe\n", encoding="utf-8")
+    _make_stale(now_path, 14.0)
+
+    module = Today()
+    ctx = _ctx_for(now_path)
+    system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
+    module.modified(ctx, system)
+
+    expected = "-- 12.04\nsomethiung\n\n-- 01.05\nmore coffe\n"
+    assert past_path.read_text(encoding="utf-8") == expected
+    assert now_path.read_text(encoding="utf-8") == ""
+
+
+def test_ignores_other_files_even_if_stale(tmp_path: Path) -> None:
+    file_path = tmp_path / "other.md"
+    file_path.write_text("x\n", encoding="utf-8")
+    _make_stale(file_path, 20.0)
+
+    module = Today()
+    ctx = _ctx_for(file_path)
+    system = System(event=FileModifiedEvent(str(file_path)), global_template=[], modules=[module])
+
+    assert module.modified(ctx, system) is None
+    assert not (tmp_path / "past.md").exists()
+

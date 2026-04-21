@@ -14,6 +14,7 @@ from lucy_notes_manager.modules.git import Git
 from lucy_notes_manager.modules.plasma_sync import PlasmaSync
 from lucy_notes_manager.modules.renamer import Renamer
 from lucy_notes_manager.modules.sys import Sys
+from lucy_notes_manager.modules.today import Today
 from lucy_notes_manager.modules.todo_formatter import TodoFormatter
 
 TEMPLATE_STARTUP_ARGS: Template = [
@@ -53,6 +54,7 @@ MODULES: List[AbstractModule] = [
     Banner(),
     Renamer(),
     TodoFormatter(),
+    Today(),
     Sys(),
     # Git(),
     # PlasmaSync(),
