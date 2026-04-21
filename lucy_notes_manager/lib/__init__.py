@@ -18,8 +18,8 @@ def safe_notify(name: str, message: str) -> None:
     - Otherwise calls lucy_notes_manager.lib.notify(message=...).
     """
     now = time.time()
-    last = _NOTIFY_LAST.get(name, 0.0)
-    if now - last < _NOTIFY_MIN_INTERVAL_SEC:
+    last = _NOTIFY_LAST.get(name)
+    if last is not None and (now - last) < _NOTIFY_MIN_INTERVAL_SEC:
         return
     _NOTIFY_LAST[name] = now
     notify(message=message)

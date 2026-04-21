@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from lucy_notes_manager.lib.args import (
+    delete_args_from_string,
+    get_config_args,
+    merge_known_args,
+    parse_args,
+)
+
+
+def test_parse_args_handles_bool_and_nargs():
+    template = [
+        ("--todo", bool, False, ""),
+        ("--name", str, None, ""),
+        ("--count", int, 3, ""),
+    ]
+
+    known, unknown = parse_args(
+        args=["--todo", "--name", "alice", "bob", "--unknown"],
+        template=template,
+    )
+
+    assert known["todo"] is True
+    assert known["name"] == ["alice", "bob"]
+    assert known["count"] == 3
+    assert unknown == ["--unknown"]
+
+
+def test_get_config_args_reads_lines_and_ignores_comments(tmp_path: Path):
+    cfg = tmp_path / "config.txt"
+    cfg.write_text(
+        "# comment\n--name jane\n\n--count 7\n",
+        encoding="utf-8",
+    )
+    template = [
+        ("--name", str, None, ""),
+        ("--count", int, 0, ""),
+    ]
+
+    known, unknown = get_config_args(str(cfg), template)
+    assert known["name"] == ["jane"]
+    assert known["count"] == [7]
+    assert unknown == []
+
+
+def test_merge_known_args_overwrites_only_when_value_is_meaningful():
+    base = {"a": 1, "b": "x", "c": ["old"]}
+    overwrite = {"a": None, "b": "", "c": ["new"], "d": 5}
+
+    merged = merge_known_args(base, overwrite)
+
+    assert merged == {"a": 1, "b": "x", "c": ["new"], "d": 5}
+
+
+def test_delete_args_from_string_removes_flag_segments():
+    line = '--banner "Hello world" body --todo --x=1 tail\n'
+    cleaned = delete_args_from_string(line, ["--banner", "--todo", "--x"])
+    assert cleaned == "body tail\n"

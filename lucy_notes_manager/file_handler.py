@@ -110,8 +110,8 @@ class FileHandler(FileSystemEventHandler):
         if self._opened_events_seen % self._cleanup_every_open_events == 0:
             self._cleanup_open_cache_oldest_n()
 
-        last = self._last_open_ts.get(abs_path, 0.0)
-        if (now - last) < self._open_cooldown_seconds:
+        last = self._last_open_ts.get(abs_path)
+        if last is not None and (now - last) < self._open_cooldown_seconds:
             return False
 
         self._last_open_ts[abs_path] = now
