@@ -105,4 +105,3 @@ def test_ignores_other_files_even_if_stale(tmp_path: Path) -> None:
 
     assert module.modified(ctx, system) is None
     assert not (tmp_path / "past.md").exists()
-

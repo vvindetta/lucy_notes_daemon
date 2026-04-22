@@ -221,9 +221,7 @@ def test_sync_ring_many_texts_keeps_final_state_deterministic(tmp_path: Path):
 
             widget_doc = plasma_mod._html_to_doc(widget_path.read_text(encoding="utf-8"))
             expected_items = plasma_mod._extract_bold_items_from_doc(widget_doc)
-            mirror_items = plasma_mod._mirror_html_to_items(
-                mirror_path.read_text(encoding="utf-8")
-            )
+            mirror_items = plasma_mod._mirror_html_to_items(mirror_path.read_text(encoding="utf-8"))
             assert mirror_items == expected_items
 
     final_md = md_path.read_text(encoding="utf-8")

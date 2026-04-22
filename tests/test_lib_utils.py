@@ -9,7 +9,9 @@ def test_safe_notify_throttles_by_name(monkeypatch):
     calls: list[str] = []
     times = iter([0.0, 1.0, 15.0])
 
-    monkeypatch.setattr(lib_mod, "notify", lambda message, title="Lucy Note Manager": calls.append(message))
+    monkeypatch.setattr(
+        lib_mod, "notify", lambda message, title="Lucy Note Manager": calls.append(message)
+    )
     monkeypatch.setattr(lib_mod.time, "time", lambda: next(times))
     lib_mod._NOTIFY_LAST.clear()
 

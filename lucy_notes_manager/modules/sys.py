@@ -82,9 +82,7 @@ class Sys(AbstractModule):
         for flag, typ, default, desc in system.global_template:
             type_name = self._type_name(typ)
             description = (desc or "").strip()
-            lines.append(
-                f"* {flag}: {description} (type={type_name}, default={default})\n"
-            )
+            lines.append(f"* {flag}: {description} (type={type_name}, default={default})\n")
         return lines or ["* (no args)\n"]
 
     def _man_one_lines(self, system: System, requested_names: List[str]) -> List[str]:
@@ -102,9 +100,7 @@ class Sys(AbstractModule):
             if flag_name in requested_set or dest_name in requested_set:
                 type_name = self._type_name(typ)
                 description = (desc or "").strip()
-                matched.append(
-                    f"* {flag}: {description} (type={type_name}, default={default})\n"
-                )
+                matched.append(f"* {flag}: {description} (type={type_name}, default={default})\n")
 
         if matched:
             return matched
@@ -112,9 +108,7 @@ class Sys(AbstractModule):
         return [f"* (unknown arg: {', '.join(requested)})\n"]
 
     def _man_lines(self, system: System, requests: List[str]) -> List[str]:
-        normalized_requests = [
-            self._normalize_arg_name(item) for item in (requests or [])
-        ]
+        normalized_requests = [self._normalize_arg_name(item) for item in (requests or [])]
         normalized_requests = [item for item in normalized_requests if item]
 
         if not normalized_requests:
@@ -177,9 +171,7 @@ class Sys(AbstractModule):
                     if key in ctx.arg_lines
                     else "config/default"
                 )
-                lines.append(
-                    f"* {key} = {current_value} (default={default_value}, src={source})\n"
-                )
+                lines.append(f"* {key} = {current_value} (default={default_value}, src={source})\n")
                 printed_any = True
 
             if not printed_any:
@@ -230,9 +222,7 @@ class Sys(AbstractModule):
                 lineno_int = int(lineno_1based)
                 add_option(lineno_int, "man", "--man")
                 if man_value is not None and str(man_value).strip():
-                    line_to_man_requests.setdefault(lineno_int, []).append(
-                        str(man_value).strip()
-                    )
+                    line_to_man_requests.setdefault(lineno_int, []).append(str(man_value).strip())
 
         if not line_to_opts:
             return None
@@ -261,9 +251,7 @@ class Sys(AbstractModule):
             )
 
             if index == 0:
-                cleaned_first_line = delete_args_from_string(
-                    file_lines[0], remove_flags
-                )
+                cleaned_first_line = delete_args_from_string(file_lines[0], remove_flags)
                 if cleaned_first_line.strip() == "":
                     file_lines[0:1] = block
                     continue

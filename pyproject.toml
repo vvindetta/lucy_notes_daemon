@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lucy-notes-daemon"
+version = "0.1.0"
+description = "Modular notes manager daemon: run module pipelines on edited note files."
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.9"
+authors = [
+    { name = "vvindetta" },
+]
+keywords = ["notes", "daemon", "watchdog", "markdown", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Editors",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "watchdog",
+    "pyfiglet",
+    "notify-py",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov",
+    "black>=24",
+    "isort>=5",
+    "flake8>=6",
+    "build>=1",
+]
+
+[project.scripts]
+lucy-notes-daemon = "lucy_notes_manager.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/vvindetta/lucy_notes_daemon"
+Issues = "https://github.com/vvindetta/lucy_notes_daemon/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["lucy_notes_manager*"]
+exclude = ["tests*", "experiments*", "examples*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+timeout = 60

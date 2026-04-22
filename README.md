@@ -77,13 +77,16 @@ You can provide flags in three places:
 
 ## Install
 
-Tested on Fedora GNU+Linux.
+Tested on Fedora GNU+Linux. Packaging recipes are provided for Debian/Ubuntu,
+Fedora, and Arch Linux.
+
+### From source (any Linux)
 
 1. Clone the repository:
 ```
 git clone https://codeberg.org/Vindetta/lucy_notes_daemon && cd lucy_notes_daemon
 ```
-   
+
 2. Install dependencies:
 ```
 pip install -r requirements.txt
@@ -97,6 +100,70 @@ python3 main.py
 ```
 
 **Turn on file auto-update in your text editor!**
+
+### From a Python package (pip / pipx)
+
+After the CI pipeline builds a wheel/sdist, you can install the daemon
+directly from Python tooling:
+
+```
+pipx install lucy-notes-daemon   # recommended, isolates dependencies
+# or: pip install lucy-notes-daemon
+lucy-notes-daemon --sys-notes-dirs ~/notes
+```
+
+### Debian / Ubuntu (.deb)
+
+Build a `.deb` locally (requires `python3-build` and `dpkg-dev`):
+
+```
+bash packaging/scripts/build-deb.sh
+sudo apt install ./packaging/build/lucy-notes-daemon_*_all.deb
+```
+
+The CI job `Packaging / Build .deb (Debian/Ubuntu)` produces the same
+artifact on tagged releases under the `deb-package` artifact.
+
+### Fedora / RHEL (.rpm)
+
+Build an `.rpm` locally (requires `rpm-build` and `python3-build`):
+
+```
+bash packaging/scripts/build-rpm.sh
+sudo dnf install packaging/build/rpm/RPMS/noarch/lucy-notes-daemon-*.noarch.rpm
+```
+
+### Arch Linux (PKGBUILD)
+
+Build on an Arch host (requires `base-devel`, `python-build`):
+
+```
+bash packaging/scripts/build-arch.sh
+sudo pacman -U packaging/build/arch/lucy-notes-daemon-*.pkg.tar.*
+```
+
+After installation the binary is available as `lucy-notes-daemon`. A
+template config is placed at `/etc/lucy-notes-daemon/config.txt` and a
+systemd user service is registered at
+`~/.config/systemd/user/lucy-notes-daemon.service` (enable with
+`systemctl --user enable --now lucy-notes-daemon`).
+
+## Development
+
+Install dev dependencies and run the CI checks locally:
+
+```
+pip install -r requirements-dev.txt
+black --check .
+isort --check-only .
+flake8 lucy_notes_manager tests
+pytest
+```
+
+Continuous integration runs these same checks on every push and pull
+request; see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+Packaging for the three distributions is driven from
+[`.github/workflows/packaging.yml`](.github/workflows/packaging.yml).
 
 ## Modules
 

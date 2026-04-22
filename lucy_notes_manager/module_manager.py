@@ -62,9 +62,7 @@ class ModuleManager:
                 template=self.template,
                 only_first_line=self.config["sys_use_only_first_line"],
             )
-            merged_known_args = merge_known_args(
-                args=self.config, overwrite_args=known_args
-            )
+            merged_known_args = merge_known_args(args=self.config, overwrite_args=known_args)
             return merged_known_args, arg_lines
 
         config, arg_lines = _update_config()
@@ -72,10 +70,7 @@ class ModuleManager:
         ignore_paths: Dict[str, int] = {}
 
         for module in self.modules:
-            if (
-                module.name in self.config["exclude"]
-                and module.name not in self.config["force"]
-            ):
+            if module.name in self.config["exclude"] and module.name not in self.config["force"]:
                 continue
 
             if event.event_type not in module.__class__.__dict__:  # not from parent
@@ -135,9 +130,7 @@ class ModuleManager:
             try:
                 pr = int(raw)
             except ValueError:
-                raise ValueError(
-                    f"Invalid --priority item '{item}': priority must be an integer"
-                )
+                raise ValueError(f"Invalid --priority item '{item}': priority must be an integer")
 
             priorities[name] = pr
 

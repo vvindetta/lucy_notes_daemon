@@ -66,9 +66,7 @@ def get_config_args(path: str, template: Template) -> Tuple[Dict[str, Any], List
     return parse_args(template=template, args=config_args_raw)
 
 
-def merge_known_args(
-    args: Dict[str, Any], overwrite_args: Dict[str, Any]
-) -> Dict[str, Any]:
+def merge_known_args(args: Dict[str, Any], overwrite_args: Dict[str, Any]) -> Dict[str, Any]:
     """
     Merge two dicts of parsed arguments.
 

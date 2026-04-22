@@ -41,9 +41,7 @@ def _read_file(path: str) -> str:
         return ""
     except PermissionError as error:
         logger.error("Permission error reading %s: %s", path, error)
-        safe_notify(
-            "read_perm:" + path, f"Permission denied reading:\n{path}\n\n{error}"
-        )
+        safe_notify("read_perm:" + path, f"Permission denied reading:\n{path}\n\n{error}")
         return ""
     except OSError as error:
         logger.error("OS error reading %s: %s", path, error)
@@ -63,9 +61,7 @@ def _write_if_changed(path: str, content: str) -> bool:
         return True
     except PermissionError as error:
         logger.error("Permission error writing %s: %s", path, error)
-        safe_notify(
-            "write_perm:" + path, f"Permission denied writing:\n{path}\n\n{error}"
-        )
+        safe_notify("write_perm:" + path, f"Permission denied writing:\n{path}\n\n{error}")
         return False
     except OSError as error:
         logger.error("OS error writing %s: %s", path, error)
@@ -521,9 +517,7 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
         for text, is_bold in _merge_segs(segs):
             safe_text = html.escape(text, quote=False)
             inner.append(
-                f'<span style=" font-weight:700;">{safe_text}</span>'
-                if is_bold
-                else safe_text
+                f'<span style=" font-weight:700;">{safe_text}</span>' if is_bold else safe_text
             )
         return "".join(inner)
 
@@ -545,9 +539,7 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
 
             # paragraph
             if _segs_plain(dl.segs).strip() == "":
-                parts.append(
-                    f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n'
-                )
+                parts.append(f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n')
             else:
                 inner = segs_to_inner(dl.segs)
                 parts.append(f'<p style="{base_style}">{inner}</p>\n')
@@ -577,9 +569,7 @@ def _doc_to_plasma_html(doc: List[DocLine], css_style: bool = False) -> str:
             in_ul = False
 
         if _segs_plain(dl.segs).strip() == "":
-            parts.append(
-                f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n'
-            )
+            parts.append(f'<p style="-qt-paragraph-type:empty;{base_style}"><br /></p>\n')
         else:
             inner = segs_to_inner(dl.segs)
             parts.append(f'<p style="{base_style}">{inner}</p>\n')
@@ -623,11 +613,7 @@ def _items_hash(items: List[str]) -> str:
 
 
 def _bold_items_to_plasma_html(items: List[str]) -> str:
-    doc = [
-        DocLine(kind="p", state=None, segs=[(it.strip(), True)])
-        for it in items
-        if it.strip()
-    ]
+    doc = [DocLine(kind="p", state=None, segs=[(it.strip(), True)]) for it in items if it.strip()]
     # mirror always plain (no checkbox glyphs)
     return _doc_to_plasma_html(doc, css_style=False)
 
@@ -644,9 +630,7 @@ def _mirror_html_to_items(mirror_html: str) -> List[str]:
     return _dedupe_consecutive(items)
 
 
-def _apply_mirror_items_to_doc(
-    main_doc: List[DocLine], items: List[str]
-) -> List[DocLine]:
+def _apply_mirror_items_to_doc(main_doc: List[DocLine], items: List[str]) -> List[DocLine]:
     """
     Line-safe mapping:
     - every line that contains ANY bold in MAIN consumes exactly 1 item from mirror
@@ -666,9 +650,7 @@ def _apply_mirror_items_to_doc(
             continue
 
         if index < len(cleaned):
-            out.append(
-                DocLine(kind=dl.kind, state=dl.state, segs=[(cleaned[index], True)])
-            )
+            out.append(DocLine(kind=dl.kind, state=dl.state, segs=[(cleaned[index], True)]))
             index += 1
         else:
             out.append(dl)
@@ -730,9 +712,7 @@ def _init_from_disk_once(
 # ---------------- Enforce widget render mode on config toggle ---------------- #
 
 
-def _ensure_widget_render_mode(
-    widget_path: str, css_style: bool, ignore: IgnoreMap
-) -> None:
+def _ensure_widget_render_mode(widget_path: str, css_style: bool, ignore: IgnoreMap) -> None:
     """
     If config flag changed, rewrite the widget HTML into:
       - css_style=True  -> real <ul>/<li> + marker CSS (☐/☒)
@@ -848,12 +828,8 @@ class PlasmaSync(AbstractModule):
             raise ValueError("PlasmaSync: invalid value for --plasma-css-style")
 
         widget_path = one_value("plasma_widget_path", "--plasma-widget-path", True)
-        markdown_path = one_value(
-            "plasma_markdown_note_path", "--plasma-markdown-note-path", True
-        )
-        bold_widget_path = one_value(
-            "plasma_bold_widget_path", "--plasma-bold-widget-path", False
-        )
+        markdown_path = one_value("plasma_markdown_note_path", "--plasma-markdown-note-path", True)
+        bold_widget_path = one_value("plasma_bold_widget_path", "--plasma-bold-widget-path", False)
         css_style = bool_value(["plasma_css_style", "plasma-css-style"], default=False)
 
         return widget_path or "", markdown_path or "", bold_widget_path, css_style
@@ -869,14 +845,10 @@ class PlasmaSync(AbstractModule):
         bold_abs = _rpath(bold_widget_path) if bold_widget_path else None
 
         if path == md_abs:
-            return self._from_markdown(
-                markdown_path, widget_path, bold_widget_path, css_style
-            )
+            return self._from_markdown(markdown_path, widget_path, bold_widget_path, css_style)
 
         if bold_abs and path == bold_abs:
-            return self._from_bold_mirror(
-                widget_path, markdown_path, bold_widget_path, css_style
-            )
+            return self._from_bold_mirror(widget_path, markdown_path, bold_widget_path, css_style)
 
         if path == widget_abs:
             return self._from_main_plasma(
