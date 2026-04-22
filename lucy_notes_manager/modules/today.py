@@ -47,9 +47,7 @@ class Today(AbstractModule):
 
     def _resolve_paths(self, ctx: Context) -> tuple[str, str] | None:
         now_name = str(self._one(ctx.config, "today_now_name", "now.md")).strip() or "now.md"
-        past_name = (
-            str(self._one(ctx.config, "today_past_name", "past.md")).strip() or "past.md"
-        )
+        past_name = str(self._one(ctx.config, "today_past_name", "past.md")).strip() or "past.md"
 
         now_path = os.path.abspath(ctx.path)
         if os.path.basename(now_path) != now_name:
@@ -138,4 +136,3 @@ class Today(AbstractModule):
 
     def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._archive_if_needed(ctx)
-

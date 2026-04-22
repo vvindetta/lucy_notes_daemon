@@ -47,9 +47,7 @@ class FileHandler(FileSystemEventHandler):
         else:
             if self._check_and_delete_ignore(file_path):
                 return
-            logger.info(
-                f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}"
-            )
+            logger.info(f"EVENT: {str(event.event_type).capitalize()}: {event.src_path}")
 
         ignore_paths = self.modules.run(path=file_path, event=event)
         if ignore_paths:

@@ -248,17 +248,11 @@ class Git(AbstractModule):
         return result_paths
 
     def _build_commit_message(self, batch: _RepoBatch, changed_paths: list[str]) -> str:
-        event_summary = (
-            "+".join(sorted(batch.event_types)) if batch.event_types else "change"
-        )
+        event_summary = "+".join(sorted(batch.event_types)) if batch.event_types else "change"
 
-        file_names = [
-            os.path.basename(path_item) for path_item in changed_paths if path_item
-        ]
+        file_names = [os.path.basename(path_item) for path_item in changed_paths if path_item]
         if not file_names and batch.hinted_paths:
-            file_names = [
-                os.path.basename(path_item) for path_item in sorted(batch.hinted_paths)
-            ]
+            file_names = [os.path.basename(path_item) for path_item in sorted(batch.hinted_paths)]
 
         shown_names = ", ".join(file_names[:8])
         if len(file_names) > 8:
@@ -405,26 +399,18 @@ class Git(AbstractModule):
                 line_index += 1
 
                 ours_lines: list[str] = []
-                while line_index < len(lines) and not lines[line_index].startswith(
-                    "======="
-                ):
+                while line_index < len(lines) and not lines[line_index].startswith("======="):
                     ours_lines.append(lines[line_index])
                     line_index += 1
-                if line_index >= len(lines) or not lines[line_index].startswith(
-                    "======="
-                ):
+                if line_index >= len(lines) or not lines[line_index].startswith("======="):
                     return None
                 line_index += 1
 
                 theirs_lines: list[str] = []
-                while line_index < len(lines) and not lines[line_index].startswith(
-                    ">>>>>>> "
-                ):
+                while line_index < len(lines) and not lines[line_index].startswith(">>>>>>> "):
                     theirs_lines.append(lines[line_index])
                     line_index += 1
-                if line_index >= len(lines) or not lines[line_index].startswith(
-                    ">>>>>>> "
-                ):
+                if line_index >= len(lines) or not lines[line_index].startswith(">>>>>>> "):
                     return None
                 line_index += 1
 
@@ -457,9 +443,7 @@ class Git(AbstractModule):
         if normalized_mode not in {"none", "ours", "theirs", "union"}:
             normalized_mode = "none"
 
-        conflicted_paths = self._conflicted_files(
-            repo_root, environment, timeout_seconds
-        )
+        conflicted_paths = self._conflicted_files(repo_root, environment, timeout_seconds)
         if not conflicted_paths or normalized_mode == "none":
             return False
 
@@ -506,11 +490,7 @@ class Git(AbstractModule):
                                     "auto-resolve union fallback checkout failed | repo=%s | file=%s | err=%s",
                                     repo_root,
                                     relative_path,
-                                    (
-                                        checkout_result.stderr
-                                        or checkout_result.stdout
-                                        or ""
-                                    )[:1200],
+                                    (checkout_result.stderr or checkout_result.stdout or "")[:1200],
                                 )
                                 return False
                         else:
@@ -532,11 +512,7 @@ class Git(AbstractModule):
                                 "auto-resolve union non-file checkout failed | repo=%s | path=%s | err=%s",
                                 repo_root,
                                 relative_path,
-                                (
-                                    checkout_result.stderr
-                                    or checkout_result.stdout
-                                    or ""
-                                )[:1200],
+                                (checkout_result.stderr or checkout_result.stdout or "")[:1200],
                             )
                             return False
                 except OSError:
@@ -580,12 +556,8 @@ class Git(AbstractModule):
         auto_set_upstream: bool = True,
     ) -> bool:
         if not self._has_upstream(repo_root, environment, operation_timeout_seconds):
-            branch_name = self._current_branch(
-                repo_root, environment, operation_timeout_seconds
-            )
-            remote_name = self._pick_remote(
-                repo_root, environment, operation_timeout_seconds
-            )
+            branch_name = self._current_branch(repo_root, environment, operation_timeout_seconds)
+            remote_name = self._pick_remote(repo_root, environment, operation_timeout_seconds)
 
             if not branch_name or not remote_name:
                 logger.warning(
@@ -653,9 +625,7 @@ class Git(AbstractModule):
             if pull_result.returncode == 0:
                 return True
 
-            if self._merge_in_progress(
-                repo_root, environment, operation_timeout_seconds
-            ):
+            if self._merge_in_progress(repo_root, environment, operation_timeout_seconds):
                 resolved = self._auto_resolve_merge_conflicts(
                     repo_root,
                     environment,
@@ -671,9 +641,7 @@ class Git(AbstractModule):
                     environment,
                     timeout_seconds=operation_timeout_seconds,
                 )
-                pull_error = (
-                    pull_result.stderr or pull_result.stdout or "git pull failed"
-                ).strip()
+                pull_error = (pull_result.stderr or pull_result.stdout or "git pull failed").strip()
                 logger.error(
                     "git pull conflict; auto-resolve failed; merge aborted | repo=%s | error=%s",
                     repo_root,
@@ -690,12 +658,8 @@ class Git(AbstractModule):
                 )
                 return False
 
-            pull_error = (
-                pull_result.stderr or pull_result.stdout or "git pull failed"
-            ).strip()
-            logger.error(
-                "git pull failed | repo=%s | error=%s", repo_root, pull_error[:1200]
-            )
+            pull_error = (pull_result.stderr or pull_result.stdout or "git pull failed").strip()
+            logger.error("git pull failed | repo=%s | error=%s", repo_root, pull_error[:1200])
             safe_notify(
                 name=f"pullfail:{repo_root}",
                 message=(
@@ -740,9 +704,7 @@ class Git(AbstractModule):
                 environment,
                 timeout_seconds=operation_timeout_seconds,
             )
-            pull_error = (
-                pull_result.stderr or pull_result.stdout or "git pull failed"
-            ).strip()
+            pull_error = (pull_result.stderr or pull_result.stdout or "git pull failed").strip()
             logger.error(
                 "git pull conflict; auto-resolve failed; merge aborted | repo=%s | error=%s",
                 repo_root,
@@ -759,12 +721,8 @@ class Git(AbstractModule):
             )
             return False
 
-        pull_error = (
-            pull_result.stderr or pull_result.stdout or "git pull failed"
-        ).strip()
-        logger.error(
-            "git pull failed | repo=%s | error=%s", repo_root, pull_error[:1200]
-        )
+        pull_error = (pull_result.stderr or pull_result.stdout or "git pull failed").strip()
+        logger.error("git pull failed | repo=%s | error=%s", repo_root, pull_error[:1200])
         safe_notify(
             name=f"pullfail:{repo_root}",
             message=(
@@ -783,9 +741,7 @@ class Git(AbstractModule):
         config_snapshot: dict,
         wants_pull: bool,
     ) -> None:
-        self._event_queue.put(
-            (repo_root, event_type, paths, dict(config_snapshot), wants_pull)
-        )
+        self._event_queue.put((repo_root, event_type, paths, dict(config_snapshot), wants_pull))
 
     def _pull_allowed_with_progression(
         self,
@@ -798,9 +754,7 @@ class Git(AbstractModule):
         current_cd = self._pull_cooldown_seconds.get(repo_root, cooldown_min_seconds)
 
         if now < next_allowed:
-            new_cd = min(
-                max(current_cd, cooldown_min_seconds) * 2.0, cooldown_max_seconds
-            )
+            new_cd = min(max(current_cd, cooldown_min_seconds) * 2.0, cooldown_max_seconds)
             self._pull_cooldown_seconds[repo_root] = new_cd
             self._pull_next_allowed_at[repo_root] = max(next_allowed, now + new_cd)
             return False
@@ -812,37 +766,25 @@ class Git(AbstractModule):
     def _worker_loop(self) -> None:
         while True:
             try:
-                repo_root, event_type, paths, config_snapshot, wants_pull = (
-                    self._event_queue.get(timeout=0.2)
+                repo_root, event_type, paths, config_snapshot, wants_pull = self._event_queue.get(
+                    timeout=0.2
                 )
                 now_timestamp = time.time()
 
                 environment = self._git_environment(config_snapshot)
 
-                base_message = (
-                    config_snapshot.get("git_msg") or self.default_commit_message
-                )
+                base_message = config_snapshot.get("git_msg") or self.default_commit_message
                 add_timestamp_to_message = config_snapshot.get("git_tsmsg", False)
-                timestamp_format = (
-                    config_snapshot.get("git_tsfmt") or self.default_timestamp_format
-                )
+                timestamp_format = config_snapshot.get("git_tsfmt") or self.default_timestamp_format
 
-                debounce_seconds = float(
-                    config_snapshot.get("git_debounce_seconds", 0.8)
-                )
+                debounce_seconds = float(config_snapshot.get("git_debounce_seconds", 0.8))
                 git_timeout_seconds = float(config_snapshot.get("git_timeout_sec", 8.0))
-                pull_timeout_seconds = float(
-                    config_snapshot.get("git_pull_timeout_sec", 30.0)
-                )
-                push_timeout_seconds = float(
-                    config_snapshot.get("git_push_timeout_sec", 20.0)
-                )
+                pull_timeout_seconds = float(config_snapshot.get("git_pull_timeout_sec", 30.0))
+                push_timeout_seconds = float(config_snapshot.get("git_push_timeout_sec", 20.0))
                 backoff_start_seconds = float(
                     config_snapshot.get("git_push_backoff_start_sec", 5.0)
                 )
-                backoff_max_seconds = float(
-                    config_snapshot.get("git_push_backoff_max_sec", 120.0)
-                )
+                backoff_max_seconds = float(config_snapshot.get("git_push_backoff_max_sec", 120.0))
 
                 pull_cooldown_min_seconds = float(
                     config_snapshot.get("git_pull_cooldown_min_sec", 10.0)
@@ -912,9 +854,7 @@ class Git(AbstractModule):
             due_batches: list[_RepoBatch] = []
             with self._pending_lock:
                 for repo_root_key, batch in list(self._pending_batches.items()):
-                    if current_timestamp - batch.last_event_at >= float(
-                        batch.debounce_seconds
-                    ):
+                    if current_timestamp - batch.last_event_at >= float(batch.debounce_seconds):
                         due_batches.append(batch)
                         del self._pending_batches[repo_root_key]
 
@@ -993,12 +933,8 @@ class Git(AbstractModule):
             return
 
         if add_result.returncode != 0:
-            add_error = (
-                add_result.stderr or add_result.stdout or "git add failed"
-            ).strip()
-            logger.error(
-                "git add failed | repo=%s | error=%s", repo_root, add_error[:1200]
-            )
+            add_error = (add_result.stderr or add_result.stdout or "git add failed").strip()
+            logger.error("git add failed | repo=%s | error=%s", repo_root, add_error[:1200])
             safe_notify(
                 name=f"addfail:{repo_root}",
                 message=f"Repository:\n{repo_root}\n\nError:\n{add_error[:1200]}",
@@ -1024,9 +960,7 @@ class Git(AbstractModule):
             status_error = (
                 status_result.stderr or status_result.stdout or "git status failed"
             ).strip()
-            logger.error(
-                "git status failed | repo=%s | error=%s", repo_root, status_error[:1200]
-            )
+            logger.error("git status failed | repo=%s | error=%s", repo_root, status_error[:1200])
             safe_notify(
                 name=f"statusfail:{repo_root}",
                 message=f"Repository:\n{repo_root}\n\nError:\n{status_error[:1200]}",
@@ -1061,9 +995,7 @@ class Git(AbstractModule):
                 )
                 if "nothing to commit" not in combined_output:
                     commit_error = (
-                        commit_result.stderr
-                        or commit_result.stdout
-                        or "git commit failed"
+                        commit_result.stderr or commit_result.stdout or "git commit failed"
                     ).strip()
                     logger.error(
                         "git commit failed | repo=%s | error=%s",
@@ -1105,9 +1037,7 @@ class Git(AbstractModule):
                     timeout_seconds=push_timeout_seconds,
                 )
             except subprocess.TimeoutExpired:
-                self._register_push_failure(
-                    repo_root, backoff_start_seconds, backoff_max_seconds
-                )
+                self._register_push_failure(repo_root, backoff_start_seconds, backoff_max_seconds)
                 logger.error("git push timed out | repo=%s", repo_root)
                 safe_notify(
                     name=f"timeout:push:{repo_root}",
@@ -1124,9 +1054,7 @@ class Git(AbstractModule):
                 (push_result.stderr or "") + "\n" + (push_result.stdout or "")
             ).strip()
 
-            if batch.auto_merge_on_push and self._push_rejected_needs_pull(
-                combined_push_output
-            ):
+            if batch.auto_merge_on_push and self._push_rejected_needs_pull(combined_push_output):
                 pulled = self._safe_pull_merge(
                     repo_root,
                     environment,
@@ -1137,23 +1065,14 @@ class Git(AbstractModule):
                 )
                 if pulled:
                     second_push_result = run_push()
-                    if (
-                        second_push_result is not None
-                        and second_push_result.returncode == 0
-                    ):
+                    if second_push_result is not None and second_push_result.returncode == 0:
                         self._push_backoff_seconds[repo_root] = backoff_start_seconds
                         self._push_next_allowed_at[repo_root] = 0.0
                         return
 
-            self._register_push_failure(
-                repo_root, backoff_start_seconds, backoff_max_seconds
-            )
-            push_error = (
-                push_result.stderr or push_result.stdout or "git push failed"
-            ).strip()
-            logger.error(
-                "git push failed | repo=%s | error=%s", repo_root, push_error[:1200]
-            )
+            self._register_push_failure(repo_root, backoff_start_seconds, backoff_max_seconds)
+            push_error = (push_result.stderr or push_result.stdout or "git push failed").strip()
+            logger.error("git push failed | repo=%s | error=%s", repo_root, push_error[:1200])
             safe_notify(
                 name=f"pushfail:{repo_root}",
                 message=(
@@ -1169,19 +1088,13 @@ class Git(AbstractModule):
     def _register_push_failure(
         self, repo_root: str, backoff_start_seconds: float, backoff_max_seconds: float
     ) -> None:
-        current_backoff = self._push_backoff_seconds.get(
-            repo_root, backoff_start_seconds
-        )
-        new_backoff = min(
-            max(current_backoff, backoff_start_seconds) * 2.0, backoff_max_seconds
-        )
+        current_backoff = self._push_backoff_seconds.get(repo_root, backoff_start_seconds)
+        new_backoff = min(max(current_backoff, backoff_start_seconds) * 2.0, backoff_max_seconds)
         self._push_backoff_seconds[repo_root] = new_backoff
         self._push_next_allowed_at[repo_root] = time.time() + new_backoff
 
     def opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
-        ctx_path = (
-            self._abs(self._to_str(ctx.path)) if getattr(ctx, "path", None) else ""
-        )
+        ctx_path = self._abs(self._to_str(ctx.path)) if getattr(ctx, "path", None) else ""
         if ctx_path and self._path_is_inside_git_dir(ctx_path):
             return None
 
@@ -1213,23 +1126,17 @@ class Git(AbstractModule):
     def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx, system, "moved")
 
-    def _handle(
-        self, ctx: Context, system: System, event_type: str
-    ) -> Optional[IgnoreMap]:
+    def _handle(self, ctx: Context, system: System, event_type: str) -> Optional[IgnoreMap]:
         event = system.event
 
         source_path_raw = self._to_str(getattr(event, "src_path", "") or "")
         destination_path_raw = getattr(event, "dest_path", None)
         destination_path_value = (
-            self._to_str(destination_path_raw)
-            if destination_path_raw is not None
-            else ""
+            self._to_str(destination_path_raw) if destination_path_raw is not None else ""
         )
 
         source_path = self._abs(source_path_raw) if source_path_raw else ""
-        destination_path = (
-            self._abs(destination_path_value) if destination_path_value else ""
-        )
+        destination_path = self._abs(destination_path_value) if destination_path_value else ""
 
         if (source_path and self._path_is_inside_git_dir(source_path)) or (
             destination_path and self._path_is_inside_git_dir(destination_path)

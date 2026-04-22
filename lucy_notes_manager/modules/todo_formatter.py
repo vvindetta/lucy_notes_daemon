@@ -24,9 +24,7 @@ class TodoFormatter(AbstractModule):
         ),
     ]
 
-    def _apply(
-        self, *, path: str, config: dict, arg_lines: dict
-    ) -> Optional[IgnoreMap]:
+    def _apply(self, *, path: str, config: dict, arg_lines: dict) -> Optional[IgnoreMap]:
         todo_vals = config["todo"]
         if not todo_vals:
             return None

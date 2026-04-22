@@ -35,9 +35,7 @@ class Banner(AbstractModule):
         ),
     ]
 
-    def _apply(
-        self, *, path: str, config: dict, arg_lines: dict
-    ) -> Optional[IgnoreMap]:
+    def _apply(self, *, path: str, config: dict, arg_lines: dict) -> Optional[IgnoreMap]:
         banner_vals = config["banner"]
         if not banner_vals:
             return None
@@ -58,9 +56,7 @@ class Banner(AbstractModule):
 
             idx = max(0, min(len(lines) - 1, lineno_1based - 1))
 
-            ascii_lines = pyfiglet.figlet_format(banner_text).splitlines(
-                True
-            )  # keep '\n'
+            ascii_lines = pyfiglet.figlet_format(banner_text).splitlines(True)  # keep '\n'
 
             while ascii_lines and ascii_lines[0].strip() == "":
                 ascii_lines.pop(0)

@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+import watchdog.observers as observers_mod
 
 import lucy_notes_manager.file_handler as file_handler_mod
 import lucy_notes_manager.lib.args as args_mod
 import lucy_notes_manager.module_manager as module_manager_mod
-import watchdog.observers as observers_mod
 
 
 def _main_path() -> str:

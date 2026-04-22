@@ -112,9 +112,7 @@ class Cmd(AbstractModule):
         return b[:max_bytes].decode("utf-8", errors="replace") + "\n…(clipped)…\n"
 
     # Execute command
-    def _run_cmd(
-        self, *, cmd_tokens: List[str], cwd: str, timeout: int
-    ) -> Tuple[int, str, str]:
+    def _run_cmd(self, *, cmd_tokens: List[str], cwd: str, timeout: int) -> Tuple[int, str, str]:
         try:
             p = subprocess.run(
                 cmd_tokens,
@@ -183,9 +181,7 @@ class Cmd(AbstractModule):
             return None
 
         timeout_raw = ctx.config.get("cmd_timeout") or [5]
-        timeout = (
-            int(timeout_raw[0]) if isinstance(timeout_raw, list) else int(timeout_raw)
-        )
+        timeout = int(timeout_raw[0]) if isinstance(timeout_raw, list) else int(timeout_raw)
 
         maxb_raw = ctx.config.get("cmd_max_bytes") or [20000]
         max_bytes = int(maxb_raw[0]) if isinstance(maxb_raw, list) else int(maxb_raw)
