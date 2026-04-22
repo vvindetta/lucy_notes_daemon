@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest>=7
+pytest-cov
+black>=24
+isort>=5
+flake8>=6
+build>=1

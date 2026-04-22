@@ -1,0 +1,15 @@
+[flake8]
+max-line-length = 100
+# E203/W503: conflicts with black's formatting.
+# E501: black already enforces line length where it can; long strings can't
+# always be wrapped, so defer to black rather than double-enforcing.
+extend-ignore = E203, W503, E501
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    venv,
+    packaging/build,
+    experiments
