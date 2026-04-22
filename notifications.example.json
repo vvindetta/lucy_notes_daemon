@@ -1,0 +1,52 @@
+[
+  {
+    "_comment": "GitHub via webhook: the HTTP server validates X-Hub-Signature-256 against 'secret'.",
+    "repo_root": "/home/user/notes",
+    "platform": "github",
+    "transport": "webhook",
+    "secret": "replace-with-a-long-random-string",
+    "branch": "main",
+    "extra": {
+      "webhook_id": "github:owner/notes"
+    }
+  },
+  {
+    "_comment": "Gitea via webhook: same scheme as GitHub. 'webhook_id' matches payload.repository.full_name.",
+    "repo_root": "/home/user/work-notes",
+    "platform": "gitea",
+    "transport": "webhook",
+    "secret": "replace-with-a-long-random-string",
+    "extra": {
+      "webhook_id": "gitea:team/work-notes"
+    }
+  },
+  {
+    "_comment": "Forgejo via webhook: identical to Gitea. 'webhook_id' matches payload.repository.full_name.",
+    "repo_root": "/home/user/forgejo-notes",
+    "platform": "forgejo",
+    "transport": "webhook",
+    "secret": "replace-with-a-long-random-string",
+    "extra": {
+      "webhook_id": "forgejo:owner/forgejo-notes"
+    }
+  },
+  {
+    "_comment": "GitLab via webhook: 'secret' is sent as the plain X-Gitlab-Token header.",
+    "repo_root": "/home/user/gitlab-notes",
+    "platform": "gitlab",
+    "transport": "webhook",
+    "secret": "replace-with-a-long-random-string",
+    "branch": "main",
+    "extra": {
+      "webhook_id": "gitlab:group/notes"
+    }
+  },
+  {
+    "_comment": "GitHub via RSS: public feed polled every 5 minutes.",
+    "repo_root": "/home/user/public-notes",
+    "platform": "github",
+    "transport": "rss",
+    "feed_url": "https://github.com/owner/public-notes/commits/main.atom",
+    "poll_interval_sec": 300
+  }
+]
