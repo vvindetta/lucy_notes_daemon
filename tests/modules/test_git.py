@@ -168,3 +168,20 @@ def test_public_api_reexports_from_package():
     """Backwards compatibility: Git and _RepoBatch importable from the package root."""
     assert git_pkg.Git is Git
     assert git_pkg._RepoBatch is _RepoBatch
+
+
+def test_trigger_pull_enqueues_event(git_module):
+    recorded = []
+    original_put = git_module._event_queue.put
+    git_module._event_queue.put = lambda item: recorded.append(item)
+    try:
+        git_module.trigger_pull("/repo", {"git_auto_pull": True})
+    finally:
+        git_module._event_queue.put = original_put
+
+    assert len(recorded) == 1
+    repo_root, event_type, path_items, config_snapshot, wants_pull = recorded[0]
+    assert repo_root == "/repo"
+    assert event_type == "opened"
+    assert path_items == []
+    assert wants_pull is True
