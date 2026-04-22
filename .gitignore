@@ -3,6 +3,7 @@ archive/
 ext_changer_legacy.py
 formatter_legacy.py
 test_notes/
+packaging/build/
 
 # ---> Python
 # Byte-compiled / optimized / DLL files

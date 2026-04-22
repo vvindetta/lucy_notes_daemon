@@ -1,0 +1,51 @@
+# Maintainer: vvindetta <noreply@github.com>
+pkgname=lucy-notes-daemon
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Modular notes manager daemon"
+arch=('any')
+url="https://github.com/vvindetta/lucy_notes_daemon"
+license=('GPL3')
+depends=('python' 'python-pip')
+makedepends=('python-build')
+source=(
+    "@WHEEL@"
+    "config.txt"
+    "lucy-notes-daemon.service"
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+    install -dm 755 "${pkgdir}/opt/lucy-notes-daemon"
+    install -dm 755 "${pkgdir}/usr/bin"
+    install -dm 755 "${pkgdir}/etc/lucy-notes-daemon"
+    install -dm 755 "${pkgdir}/usr/lib/systemd/user"
+
+    install -m 644 "${srcdir}/@WHEEL@" "${pkgdir}/opt/lucy-notes-daemon/@WHEEL@"
+    install -m 644 "${srcdir}/config.txt" "${pkgdir}/etc/lucy-notes-daemon/config.txt"
+    install -m 644 "${srcdir}/lucy-notes-daemon.service" \
+        "${pkgdir}/usr/lib/systemd/user/lucy-notes-daemon.service"
+
+    cat > "${pkgdir}/usr/bin/lucy-notes-daemon" <<'LAUNCHER'
+#!/usr/bin/env bash
+exec /opt/lucy-notes-daemon/venv/bin/lucy-notes-daemon "$@"
+LAUNCHER
+    chmod 755 "${pkgdir}/usr/bin/lucy-notes-daemon"
+}
+
+post_install() {
+    VENV=/opt/lucy-notes-daemon/venv
+    if [ ! -x "${VENV}/bin/python" ]; then
+        python -m venv "${VENV}"
+    fi
+    "${VENV}/bin/pip" install --upgrade pip >/dev/null
+    "${VENV}/bin/pip" install --upgrade /opt/lucy-notes-daemon/@WHEEL@
+}
+
+post_upgrade() {
+    post_install "$@"
+}
+
+pre_remove() {
+    rm -rf /opt/lucy-notes-daemon/venv || true
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=Lucy Notes Daemon - modular notes pipeline
+Documentation=https://github.com/vvindetta/lucy_notes_daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lucy-notes-daemon --sys-config-path /etc/lucy-notes-daemon/config.txt
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
