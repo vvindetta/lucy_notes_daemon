@@ -5,7 +5,8 @@ from datetime import datetime
 import pytest
 from watchdog.events import FileMovedEvent, FileOpenedEvent
 
-import lucy_notes_manager.modules.git as git_mod
+import lucy_notes_manager.modules.git as git_pkg
+import lucy_notes_manager.modules.git.module as git_module_mod
 from lucy_notes_manager.modules.abstract_module import Context, System
 from lucy_notes_manager.modules.git import Git, _RepoBatch
 
@@ -21,7 +22,7 @@ def git_module(monkeypatch):
         def start(self):
             self.started = True
 
-    monkeypatch.setattr(git_mod.threading, "Thread", _DummyThread)
+    monkeypatch.setattr(git_module_mod.threading, "Thread", _DummyThread)
     return Git()
 
 
@@ -48,7 +49,7 @@ def test_build_commit_message_includes_event_summary_and_names(git_module, monke
         def now(cls):
             return datetime(2026, 4, 21, 12, 0, 0)
 
-    monkeypatch.setattr(git_mod, "datetime", _FakeDateTime)
+    monkeypatch.setattr(git_module_mod, "datetime", _FakeDateTime)
 
     batch = _RepoBatch(
         repo_root="/repo",
@@ -76,7 +77,7 @@ def test_build_commit_message_includes_event_summary_and_names(git_module, monke
 
 def test_pull_allowed_with_progression(git_module, monkeypatch):
     times = iter([0.0, 1.0, 30.0])
-    monkeypatch.setattr(git_mod.time, "time", lambda: next(times))
+    monkeypatch.setattr(git_module_mod.time, "time", lambda: next(times))
 
     assert git_module._pull_allowed_with_progression("/r", 10.0, 40.0) is True
     assert git_module._pull_allowed_with_progression("/r", 10.0, 40.0) is False
@@ -84,8 +85,10 @@ def test_pull_allowed_with_progression(git_module, monkeypatch):
 
 
 def test_register_push_failure_updates_backoff(git_module, monkeypatch):
-    monkeypatch.setattr(git_mod.time, "time", lambda: 100.0)
-    git_module._register_push_failure("/repo", backoff_start_seconds=5.0, backoff_max_seconds=20.0)
+    monkeypatch.setattr(git_module_mod.time, "time", lambda: 100.0)
+    git_module._register_push_failure(
+        "/repo", backoff_start_seconds=5.0, backoff_max_seconds=20.0
+    )
 
     assert git_module._push_backoff_seconds["/repo"] == 10.0
     assert git_module._push_next_allowed_at["/repo"] == 110.0
@@ -93,7 +96,9 @@ def test_register_push_failure_updates_backoff(git_module, monkeypatch):
 
 def test_opened_enqueues_when_repo_exists(git_module, monkeypatch):
     recorded = {}
-    monkeypatch.setattr(git_module, "_find_git_root", lambda _p: "/repo")
+    monkeypatch.setattr(
+        git_module_mod.paths, "find_git_root", lambda _p: "/repo"
+    )
     monkeypatch.setattr(
         git_module,
         "_enqueue",
@@ -113,9 +118,37 @@ def test_opened_enqueues_when_repo_exists(git_module, monkeypatch):
     assert recorded["wants_pull"] is True
 
 
+def test_opened_skipped_when_update_source_not_poll(git_module, monkeypatch):
+    recorded = {}
+    monkeypatch.setattr(
+        git_module_mod.paths, "find_git_root", lambda _p: "/repo"
+    )
+    monkeypatch.setattr(
+        git_module,
+        "_enqueue",
+        lambda **kwargs: recorded.update(kwargs),
+    )
+
+    ctx = Context(
+        path="/repo/note.md",
+        config={"git_auto_pull": True, "git_update_source": "webhook"},
+        arg_lines={},
+    )
+    system = System(
+        event=FileOpenedEvent("/repo/note.md"),
+        global_template=[],
+        modules=[git_module],
+    )
+    git_module.opened(ctx, system)
+
+    assert recorded == {}
+
+
 def test_handle_moved_uses_src_and_dest_paths_for_hints(git_module, monkeypatch):
     recorded = {}
-    monkeypatch.setattr(git_module, "_find_git_root", lambda _p: "/repo")
+    monkeypatch.setattr(
+        git_module_mod.paths, "find_git_root", lambda _p: "/repo"
+    )
     monkeypatch.setattr(
         git_module,
         "_enqueue",
@@ -129,3 +162,9 @@ def test_handle_moved_uses_src_and_dest_paths_for_hints(git_module, monkeypatch)
     git_module._handle(ctx, system, "moved")
     assert recorded["paths"] == ["/repo/old.md", "/repo/new.md"]
     assert recorded["event_type"] == "moved"
+
+
+def test_public_api_reexports_from_package():
+    """Backwards compatibility: Git and _RepoBatch importable from the package root."""
+    assert git_pkg.Git is Git
+    assert git_pkg._RepoBatch is _RepoBatch
