@@ -4,6 +4,7 @@ from pathlib import Path
 
 from lucy_notes_manager.lib.args import (
     delete_args_from_string,
+    get_args_from_file,
     get_config_args,
     merge_known_args,
     parse_args,
@@ -58,3 +59,17 @@ def test_delete_args_from_string_removes_flag_segments():
     line = '--banner "Hello world" body --todo --x=1 tail\n'
     cleaned = delete_args_from_string(line, ["--banner", "--todo", "--x"])
     assert cleaned == "body tail\n"
+
+
+def test_get_args_from_file_skips_non_utf8_files(tmp_path: Path):
+    path = tmp_path / "image.png"
+    path.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+
+    template = [
+        ("--help", bool, False, ""),
+    ]
+
+    known, unknown, arg_lines = get_args_from_file(str(path), template)
+    assert known == {}
+    assert unknown == []
+    assert arg_lines == {}

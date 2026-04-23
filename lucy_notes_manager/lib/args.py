@@ -158,6 +158,9 @@ def get_args_from_file(
     except FileNotFoundError:
         logger.info(f"File: {path} not found.")
         return {}, [], {}
+    except (UnicodeDecodeError, OSError) as exc:
+        logger.debug(f"Skipping unreadable/non-text file: {path}. Reason: {exc}")
+        return {}, [], {}
 
     if not lines:
         return {}, [], {}
