@@ -47,7 +47,7 @@ def test_apply_replaces_command_line_with_output_block(tmp_path: Path, monkeypat
         modules=[module],
     )
 
-    changed = module.modified(ctx, system)
+    changed = module.on_modified(ctx, system)
     content = note.read_text(encoding="utf-8")
 
     assert changed == {str(note): 1}
@@ -64,4 +64,4 @@ def test_deleted_event_is_noop():
         global_template=[],
         modules=[],
     )
-    assert module.deleted(ctx, system) is None
+    assert module.on_deleted(ctx, system) is None

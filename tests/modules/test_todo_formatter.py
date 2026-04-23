@@ -50,7 +50,7 @@ def test_event_methods_delegate_to_apply(tmp_path: Path, monkeypatch):
         global_template=[],
         modules=[module],
     )
-    result = module.moved(ctx, system)
+    result = module.on_moved(ctx, system)
 
     assert called == [str(note)]
     assert result == {str(note): 1}

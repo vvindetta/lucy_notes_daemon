@@ -239,15 +239,15 @@ class Cmd(AbstractModule):
         return {ctx.path: 1}
 
     # Events
-    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply(ctx=ctx, system=system)
 
-    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply(ctx=ctx, system=system)
 
-    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply(ctx=ctx, system=system)
 
-    def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         # The file is already gone.
         return None

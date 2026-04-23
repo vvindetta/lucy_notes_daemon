@@ -113,6 +113,7 @@ Hot reload and install/uninstall commands are in the roadmap. Sorry.
   `- point` → `- [ ] point`
 - `banner`: prints an ASCII banner with the current date or custom text
 - `renamer`: renames a file using `--r name`
+- `today`: archives stale `now.md` into `past.md`
 
 **Experimental (disabled by default):**
 - `git`: auto commit, pull, push, etc. Please install GIT cli. 

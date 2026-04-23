@@ -95,15 +95,15 @@ class Renamer(AbstractModule):
         except (FileNotFoundError, OSError):
             return None
 
-    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         # manual rename has priority
         changed = self._apply_manual(path=ctx.path, config=ctx.config)
         if changed:
             return changed
         return self._apply_auto_on_create(path=ctx.path, config=ctx.config)
 
-    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply_manual(path=ctx.path, config=ctx.config)
 
-    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply_manual(path=ctx.path, config=ctx.config)

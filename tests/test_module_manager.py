@@ -16,7 +16,7 @@ class _ModA(AbstractModule):
     def __init__(self):
         self.calls = 0
 
-    def modified(self, ctx: Context, system: System):
+    def on_modified(self, ctx: Context, system: System):
         self.calls += 1
         return {ctx.path: 1}
 
@@ -25,7 +25,7 @@ class _ModB(AbstractModule):
     name = "b"
     priority = 30
 
-    # no modified() override on purpose
+    # no on_modified() override on purpose
 
 
 class _ModC(AbstractModule):
@@ -35,7 +35,7 @@ class _ModC(AbstractModule):
     def __init__(self):
         self.calls = 0
 
-    def modified(self, ctx: Context, system: System):
+    def on_modified(self, ctx: Context, system: System):
         self.calls += 1
         return {ctx.path: 2}
 

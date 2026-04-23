@@ -42,7 +42,7 @@ def test_apply_inserts_block_for_first_line_flags(tmp_path: Path):
         modules=[module],
     )
 
-    changed = module.modified(ctx, system)
+    changed = module.on_modified(ctx, system)
     content = note.read_text(encoding="utf-8")
 
     assert changed == {str(note): 1}

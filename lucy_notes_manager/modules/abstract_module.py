@@ -46,7 +46,8 @@ class AbstractModule(ABC):
     """
     Base interface for all processing modules.
 
-    Every module optionally handles events: created, modified, moved, deleted.
+    Every module optionally handles events:
+    - on_created, on_modified, on_moved, on_deleted, on_opened
 
     Return value
     - None:
@@ -74,17 +75,17 @@ class AbstractModule(ABC):
     priority: int = 15
     template: Template = []
 
-    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
-    def opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def on_opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
