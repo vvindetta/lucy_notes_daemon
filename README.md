@@ -5,6 +5,8 @@
 Your notes are just files. Use any editor you like. No editor plugins. Git is your cloud.
 
 Lucy daemon monitors your note folder. Every time you edit something, it runs modules on that file (formatter, sync, git, etc).
+  
+![Lucy demo](media/lucy_notes_demo.gif)
 
 Lucy can also read Unix-style flags written inside the note file and pass them to modules.
 It could be an execution command or some settings.
