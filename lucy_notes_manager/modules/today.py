@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from datetime import datetime
 from typing import Optional
@@ -12,6 +13,7 @@ from lucy_notes_manager.modules.abstract_module import (
     IgnoreMap,
     System,
 )
+from lucy_notes_manager.modules.git.helpers import find_git_root
 
 
 class Today(AbstractModule):
@@ -37,7 +39,15 @@ class Today(AbstractModule):
             [12.0],
             "Archive now file when its last modification age is >= this many hours. Default: 12",
         ),
+        (
+            "--today-force-fs",
+            bool,
+            False,
+            "Force OS filesystem mtime checks even inside Git repositories.",
+        ),
     ]
+
+    _find_git_root = staticmethod(find_git_root)
 
     def _one(self, config: dict, key: str, default):
         value = config.get(key, default)
@@ -62,12 +72,73 @@ class Today(AbstractModule):
         past_path = os.path.abspath(os.path.join(parent_dir, past_name))
         return now_path, past_path
 
-    def _is_stale(self, now_path: str, idle_hours: float) -> bool:
+    def _git_last_activity_timestamp(self, now_path: str) -> Optional[float]:
+        repo_root = self._find_git_root(now_path)
+        if not repo_root:
+            return None
+
+        rel_path = os.path.relpath(now_path, repo_root)
         try:
-            mtime = os.path.getmtime(now_path)
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain", "--", rel_path],
+                cwd=repo_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=2.0,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+        if status_result.returncode != 0:
+            return None
+
+        # If file has uncommitted changes, mtime is the fresher signal.
+        if (status_result.stdout or "").strip():
+            return None
+
+        try:
+            log_result = subprocess.run(
+                ["git", "log", "-1", "--format=%ct", "--", rel_path],
+                cwd=repo_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=2.0,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+        if log_result.returncode != 0:
+            return None
+
+        timestamp_raw = (log_result.stdout or "").strip()
+        if not timestamp_raw:
+            return None
+
+        try:
+            return float(timestamp_raw)
+        except ValueError:
+            return None
+
+    def _last_activity_timestamp(self, ctx: Context, now_path: str) -> Optional[float]:
+        if not bool(self._one(ctx.config, "today_force_fs", False)):
+            git_timestamp = self._git_last_activity_timestamp(now_path)
+            if git_timestamp is not None:
+                return git_timestamp
+
+        try:
+            return os.path.getmtime(now_path)
         except OSError:
+            return None
+
+    def _is_stale(self, ctx: Context, now_path: str, idle_hours: float) -> bool:
+        last_activity = self._last_activity_timestamp(ctx, now_path)
+        if last_activity is None:
             return False
-        age_seconds = time.time() - float(mtime)
+        age_seconds = time.time() - float(last_activity)
         return age_seconds >= max(0.0, float(idle_hours)) * 3600.0
 
     def _append_entry(self, past_path: str, entry: str) -> bool:
@@ -100,7 +171,7 @@ class Today(AbstractModule):
         now_path, past_path = resolved
 
         idle_hours = float(self._one(ctx.config, "today_idle_hours", 12.0))
-        if not self._is_stale(now_path, idle_hours):
+        if not self._is_stale(ctx, now_path, idle_hours):
             return None
 
         try:
