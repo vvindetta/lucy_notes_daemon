@@ -106,7 +106,7 @@ def test_opened_enqueues_when_repo_exists(git_module, monkeypatch):
         global_template=[],
         modules=[git_module],
     )
-    git_module.opened(ctx, system)
+    git_module.on_opened(ctx, system)
 
     assert recorded["repo_root"] == "/repo"
     assert recorded["event_type"] == "opened"
