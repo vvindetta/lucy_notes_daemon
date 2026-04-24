@@ -61,14 +61,12 @@ class Today(AbstractModule):
             str(self._one(ctx.config, "today_past_name", "past.md")).strip() or "past.md"
         )
 
-        now_path = os.path.abspath(ctx.path)
-        if os.path.basename(now_path) != now_name:
-            return None
-
         if now_name == past_name:
             return None
 
-        parent_dir = os.path.dirname(now_path)
+        event_path = os.path.abspath(ctx.path)
+        parent_dir = os.path.dirname(event_path)
+        now_path = os.path.abspath(os.path.join(parent_dir, now_name))
         past_path = os.path.abspath(os.path.join(parent_dir, past_name))
         return now_path, past_path
 

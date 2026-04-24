@@ -99,17 +99,33 @@ def test_appends_to_end_of_past_without_overwrite(tmp_path: Path, monkeypatch) -
     assert now_path.read_text(encoding="utf-8") == ""
 
 
-def test_ignores_other_files_even_if_stale(tmp_path: Path) -> None:
+def test_archives_when_event_is_other_file_in_same_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class _FakeDatetime:
+        @classmethod
+        def now(cls):
+            return datetime(2026, 5, 1, 10, 0, 0)
+
+    monkeypatch.setattr(today_mod, "datetime", _FakeDatetime)
+
+    now_path = tmp_path / "now.md"
+    now_path.write_text("archive me\n", encoding="utf-8")
+    _make_stale(now_path, 13.0)
+
     file_path = tmp_path / "other.md"
     file_path.write_text("x\n", encoding="utf-8")
-    _make_stale(file_path, 20.0)
 
     module = Today()
     ctx = _ctx_for(file_path)
     system = System(event=FileModifiedEvent(str(file_path)), global_template=[], modules=[module])
 
-    assert module.on_modified(ctx, system) is None
-    assert not (tmp_path / "past.md").exists()
+    ignore = module.on_modified(ctx, system)
+
+    past_path = tmp_path / "past.md"
+    assert ignore == {str(now_path.resolve()): 1, str(past_path.resolve()): 1}
+    assert now_path.read_text(encoding="utf-8") == ""
+    assert past_path.read_text(encoding="utf-8") == "-- 01.05\narchive me\n"
 
 
 def test_uses_git_timestamp_when_repo_file_is_clean(
