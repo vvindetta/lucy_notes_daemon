@@ -91,6 +91,98 @@ def test_register_push_failure_updates_backoff(git_module, monkeypatch):
     assert git_module._push_next_allowed_at["/repo"] == 110.0
 
 
+def test_update_periodic_pull_state_default_disabled(git_module):
+    git_module._update_periodic_pull_state(
+        repo_root="/repo",
+        config_snapshot={},
+        now_timestamp=100.0,
+    )
+    assert "/repo" not in git_module._periodic_pull_next_at
+    assert "/repo" not in git_module._periodic_pull_intervals_seconds
+    assert "/repo" not in git_module._periodic_pull_configs
+
+
+def test_update_periodic_pull_state_enables_and_emits_due_event(git_module):
+    git_module._update_periodic_pull_state(
+        repo_root="/repo",
+        config_snapshot={"git_auto_pull_every_hours": [2.0]},
+        now_timestamp=100.0,
+    )
+
+    assert git_module._periodic_pull_intervals_seconds["/repo"] == 7200.0
+    assert git_module._periodic_pull_next_at["/repo"] == 7300.0
+
+    assert git_module._collect_due_periodic_pull_events(now_timestamp=7299.0) == []
+
+    events = git_module._collect_due_periodic_pull_events(now_timestamp=7300.0)
+    assert events == [
+        ("/repo", "scheduled_pull", [], {"git_auto_pull_every_hours": [2.0]}, True)
+    ]
+    assert git_module._periodic_pull_next_at["/repo"] == 14500.0
+
+
+def test_update_periodic_pull_state_turns_off_existing_schedule(git_module):
+    git_module._update_periodic_pull_state(
+        repo_root="/repo",
+        config_snapshot={"git_auto_pull_every_hours": 1.0},
+        now_timestamp=100.0,
+    )
+    git_module._update_periodic_pull_state(
+        repo_root="/repo",
+        config_snapshot={"git_auto_pull_every_hours": 0.0},
+        now_timestamp=200.0,
+    )
+
+    assert "/repo" not in git_module._periodic_pull_next_at
+    assert "/repo" not in git_module._periodic_pull_intervals_seconds
+    assert "/repo" not in git_module._periodic_pull_configs
+
+
+def test_scheduled_pull_batch_only_runs_pull(git_module, monkeypatch):
+    pull_calls: list[tuple[str, float, float]] = []
+
+    monkeypatch.setattr(git_module, "_merge_in_progress", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        git_module,
+        "_pull_allowed_with_progression",
+        lambda **_kwargs: True,
+    )
+
+    def _safe_pull_merge(repo_root, _environment, pull_timeout_seconds, operation_timeout_seconds, **_kwargs):
+        pull_calls.append((repo_root, pull_timeout_seconds, operation_timeout_seconds))
+        return True
+
+    monkeypatch.setattr(git_module, "_safe_pull_merge", _safe_pull_merge)
+    monkeypatch.setattr(
+        git_module,
+        "_run_git",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("scheduled pull-only batches must not run add/commit/push")
+        ),
+    )
+
+    batch = _RepoBatch(
+        repo_root="/repo",
+        base_message="Auto",
+        add_timestamp_to_message=False,
+        timestamp_format="%Y",
+        environment={},
+        debounce_seconds=0.5,
+        git_timeout_seconds=5.0,
+        pull_timeout_seconds=6.0,
+        push_timeout_seconds=7.0,
+        backoff_start_seconds=2.0,
+        backoff_max_seconds=8.0,
+        pull_cooldown_min_seconds=1.0,
+        pull_cooldown_max_seconds=4.0,
+        wants_pull=True,
+        event_types={"scheduled_pull"},
+    )
+
+    git_module._process_batch(batch)
+    assert pull_calls == [("/repo", 6.0, 5.0)]
+
+
 def test_opened_enqueues_when_repo_exists(git_module, monkeypatch):
     recorded = {}
     monkeypatch.setattr(git_module, "_find_git_root", lambda _p: "/repo")

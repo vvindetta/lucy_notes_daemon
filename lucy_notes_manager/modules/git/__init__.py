@@ -43,7 +43,13 @@ from lucy_notes_manager.modules.git.operations import (
     try_set_upstream,
 )
 from lucy_notes_manager.modules.git.types import _RepoBatch
-from lucy_notes_manager.modules.git.worker import enqueue, process_batch, worker_loop
+from lucy_notes_manager.modules.git.worker import (
+    collect_due_periodic_pull_events,
+    enqueue,
+    process_batch,
+    update_periodic_pull_state,
+    worker_loop,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,8 @@ class Git(AbstractModule):
     _enqueue = enqueue
     _worker_loop = worker_loop
     _process_batch = process_batch
+    _update_periodic_pull_state = update_periodic_pull_state
+    _collect_due_periodic_pull_events = collect_due_periodic_pull_events
 
     def __init__(self) -> None:
         super().__init__()
@@ -92,6 +100,11 @@ class Git(AbstractModule):
         # on_opened pull cooldown progression (per repo)
         self._pull_next_allowed_at: dict[str, float] = {}
         self._pull_cooldown_seconds: dict[str, float] = {}
+
+        # periodic auto-pull state (per repo)
+        self._periodic_pull_next_at: dict[str, float] = {}
+        self._periodic_pull_intervals_seconds: dict[str, float] = {}
+        self._periodic_pull_configs: dict[str, dict] = {}
 
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker_thread.start()

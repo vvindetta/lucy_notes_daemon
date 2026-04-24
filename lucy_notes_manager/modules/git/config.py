@@ -37,6 +37,12 @@ GIT_TEMPLATE: Template = [
         "Automatically run 'git pull --no-rebase' when a repo is opened. Never uses rebase or force.",
     ),
     (
+        "--git-auto-pull-every-hours",
+        float,
+        0.0,
+        "Run pull-only sync every N hours for active repos. Set 0 to disable (default).",
+    ),
+    (
         "--git-pull-cooldown-min-sec",
         float,
         10.0,

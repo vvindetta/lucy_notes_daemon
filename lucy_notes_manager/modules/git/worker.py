@@ -4,11 +4,90 @@ import logging
 import subprocess
 import time
 from queue import Empty
+from typing import Any
 
 from lucy_notes_manager.lib import safe_notify
 from lucy_notes_manager.modules.git.types import _RepoBatch
 
 logger = logging.getLogger(__name__)
+_PULL_ONLY_EVENT_TYPES = {"opened", "scheduled_pull"}
+
+
+def _first_config_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
+def _config_float(config_snapshot: dict, key: str, default: float) -> float:
+    value = _first_config_value(config_snapshot.get(key, default))
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _config_bool(config_snapshot: dict, key: str, default: bool) -> bool:
+    value = _first_config_value(config_snapshot.get(key, default))
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default if value is None else bool(value)
+
+
+def _config_text(config_snapshot: dict, key: str, default: str) -> str:
+    value = _first_config_value(config_snapshot.get(key, default))
+    if value in (None, ""):
+        return default
+    return str(value)
+
+
+def update_periodic_pull_state(
+    self, repo_root: str, config_snapshot: dict, now_timestamp: float
+) -> None:
+    interval_hours = _config_float(config_snapshot, "git_auto_pull_every_hours", 0.0)
+    interval_seconds = max(0.0, interval_hours * 3600.0)
+
+    if interval_seconds <= 0.0:
+        self._periodic_pull_next_at.pop(repo_root, None)
+        self._periodic_pull_intervals_seconds.pop(repo_root, None)
+        self._periodic_pull_configs.pop(repo_root, None)
+        return
+
+    self._periodic_pull_intervals_seconds[repo_root] = interval_seconds
+    self._periodic_pull_configs[repo_root] = dict(config_snapshot)
+
+    if repo_root not in self._periodic_pull_next_at:
+        self._periodic_pull_next_at[repo_root] = now_timestamp + interval_seconds
+
+
+def collect_due_periodic_pull_events(
+    self, now_timestamp: float
+) -> list[tuple[str, str, list[str], dict, bool]]:
+    events: list[tuple[str, str, list[str], dict, bool]] = []
+
+    for repo_root, next_allowed in list(self._periodic_pull_next_at.items()):
+        if now_timestamp < next_allowed:
+            continue
+
+        interval_seconds = float(self._periodic_pull_intervals_seconds.get(repo_root, 0.0))
+        config_snapshot = self._periodic_pull_configs.get(repo_root)
+
+        if interval_seconds <= 0.0 or not isinstance(config_snapshot, dict):
+            self._periodic_pull_next_at.pop(repo_root, None)
+            self._periodic_pull_intervals_seconds.pop(repo_root, None)
+            self._periodic_pull_configs.pop(repo_root, None)
+            continue
+
+        self._periodic_pull_next_at[repo_root] = now_timestamp + interval_seconds
+        events.append((repo_root, "scheduled_pull", [], dict(config_snapshot), True))
+
+    return events
 
 
 def enqueue(
@@ -32,33 +111,47 @@ def worker_loop(self) -> None:
 
             environment = self._git_environment(config_snapshot)
 
-            base_message = config_snapshot.get("git_msg") or self.default_commit_message
-            add_timestamp_to_message = config_snapshot.get("git_tsmsg", False)
-            timestamp_format = config_snapshot.get("git_tsfmt") or self.default_timestamp_format
-
-            debounce_seconds = float(config_snapshot.get("git_debounce_seconds", 0.8))
-            git_timeout_seconds = float(config_snapshot.get("git_timeout_sec", 8.0))
-            pull_timeout_seconds = float(config_snapshot.get("git_pull_timeout_sec", 30.0))
-            push_timeout_seconds = float(config_snapshot.get("git_push_timeout_sec", 20.0))
-            backoff_start_seconds = float(
-                config_snapshot.get("git_push_backoff_start_sec", 5.0)
+            base_message = _config_text(
+                config_snapshot, "git_msg", self.default_commit_message
             )
-            backoff_max_seconds = float(
-                config_snapshot.get("git_push_backoff_max_sec", 120.0)
+            add_timestamp_to_message = _config_bool(config_snapshot, "git_tsmsg", False)
+            timestamp_format = _config_text(
+                config_snapshot, "git_tsfmt", self.default_timestamp_format
             )
 
-            pull_cooldown_min_seconds = float(
-                config_snapshot.get("git_pull_cooldown_min_sec", 10.0)
+            debounce_seconds = _config_float(config_snapshot, "git_debounce_seconds", 0.8)
+            git_timeout_seconds = _config_float(config_snapshot, "git_timeout_sec", 8.0)
+            pull_timeout_seconds = _config_float(
+                config_snapshot, "git_pull_timeout_sec", 30.0
             )
-            pull_cooldown_max_seconds = float(
-                config_snapshot.get("git_pull_cooldown_max_sec", 120.0)
+            push_timeout_seconds = _config_float(
+                config_snapshot, "git_push_timeout_sec", 20.0
+            )
+            backoff_start_seconds = _config_float(
+                config_snapshot, "git_push_backoff_start_sec", 5.0
+            )
+            backoff_max_seconds = _config_float(
+                config_snapshot, "git_push_backoff_max_sec", 120.0
             )
 
-            auto_merge_on_push = config_snapshot.get("git_auto_merge_on_push", True)
-            auto_set_upstream = config_snapshot.get("git_auto_set_upstream", True)
-            autoresolve_mode = config_snapshot.get("git_autoresolve", "union")
+            pull_cooldown_min_seconds = _config_float(
+                config_snapshot, "git_pull_cooldown_min_sec", 10.0
+            )
+            pull_cooldown_max_seconds = _config_float(
+                config_snapshot, "git_pull_cooldown_max_sec", 120.0
+            )
+
+            auto_merge_on_push = _config_bool(config_snapshot, "git_auto_merge_on_push", True)
+            auto_set_upstream = _config_bool(config_snapshot, "git_auto_set_upstream", True)
+            autoresolve_mode = _config_text(config_snapshot, "git_autoresolve", "union")
 
             with self._pending_lock:
+                self._update_periodic_pull_state(
+                    repo_root=repo_root,
+                    config_snapshot=config_snapshot,
+                    now_timestamp=now_timestamp,
+                )
+
                 existing_batch = self._pending_batches.get(repo_root)
                 if not existing_batch:
                     existing_batch = _RepoBatch(
@@ -113,14 +206,18 @@ def worker_loop(self) -> None:
 
         current_timestamp = time.time()
         due_batches: list[_RepoBatch] = []
+        periodic_pull_events: list[tuple[str, str, list[str], dict, bool]] = []
         with self._pending_lock:
             for repo_root_key, batch in list(self._pending_batches.items()):
                 if current_timestamp - batch.last_event_at >= float(batch.debounce_seconds):
                     due_batches.append(batch)
                     del self._pending_batches[repo_root_key]
+            periodic_pull_events = self._collect_due_periodic_pull_events(current_timestamp)
 
         for batch in due_batches:
             self._process_batch(batch)
+        for event in periodic_pull_events:
+            self._event_queue.put(event)
 
 
 def process_batch(self, batch: _RepoBatch) -> None:
@@ -160,8 +257,10 @@ def process_batch(self, batch: _RepoBatch) -> None:
             )
             return
 
-    opened_only = batch.event_types == {"opened"}
-    if opened_only and batch.wants_pull:
+    pull_only_batch = bool(batch.event_types) and batch.event_types.issubset(
+        _PULL_ONLY_EVENT_TYPES
+    )
+    if pull_only_batch and batch.wants_pull:
         if not self._pull_allowed_with_progression(
             repo_root=repo_root,
             cooldown_min_seconds=float(batch.pull_cooldown_min_seconds),
