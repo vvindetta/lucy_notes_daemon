@@ -47,7 +47,7 @@ TEMPLATE_STARTUP_ARGS: Template = [
         "--sys-on-open-cooldown",
         int,
         20,
-        "Cooldown for 'on_opened' events per file, in seconds. Prevents editor spam. Default: 30 seconds).",
+        "Cooldown for 'opened' events per file, in seconds. Prevents editor spam. Default: 30 seconds).",
     ),
     (
         "--sys-enable-experimental-modules",

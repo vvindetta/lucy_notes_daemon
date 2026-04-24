@@ -192,14 +192,14 @@ class Today(AbstractModule):
 
         return {now_path: 1, past_path: 1}
 
-    def on_opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._archive_if_needed(ctx)
 
-    def on_modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._archive_if_needed(ctx)
 
-    def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._archive_if_needed(ctx)
 
-    def on_moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._archive_if_needed(ctx)

@@ -16,11 +16,11 @@ def test_default_module_hooks_are_noops():
     system = System(event=FileModifiedEvent("/tmp/x"), global_template=[], modules=[module])
 
     assert module.experimental is False
-    assert module.on_created(ctx, system) is None
-    assert module.on_modified(ctx, system) is None
-    assert module.on_moved(ctx, system) is None
-    assert module.on_deleted(ctx, system) is None
-    assert module.on_opened(ctx, system) is None
+    assert module.created(ctx, system) is None
+    assert module.modified(ctx, system) is None
+    assert module.moved(ctx, system) is None
+    assert module.deleted(ctx, system) is None
+    assert module.opened(ctx, system) is None
 
 
 def test_context_and_system_dataclasses_keep_values():

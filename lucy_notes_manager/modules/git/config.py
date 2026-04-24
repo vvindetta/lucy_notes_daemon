@@ -46,13 +46,13 @@ GIT_TEMPLATE: Template = [
         "--git-pull-cooldown-min-sec",
         float,
         10.0,
-        "Minimum cooldown (seconds) between auto-pulls triggered by on_opened.",
+        "Minimum cooldown (seconds) between auto-pulls triggered by opened.",
     ),
     (
         "--git-pull-cooldown-max-sec",
         float,
         200.0,
-        "Maximum cooldown cap (seconds). Cooldown progresses (doubles) if on_opened triggers too often.",
+        "Maximum cooldown cap (seconds). Cooldown progresses (doubles) if opened triggers too often.",
     ),
     (
         "--git-auto-merge-on-push",

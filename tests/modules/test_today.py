@@ -51,7 +51,7 @@ def test_archives_now_md_when_stale_and_clears_source(tmp_path: Path, monkeypatc
     ctx = _ctx_for(now_path)
     system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
 
-    ignore = module.on_modified(ctx, system)
+    ignore = module.modified(ctx, system)
 
     past_path = tmp_path / "past.md"
     assert ignore == {str(now_path.resolve()): 1, str(past_path.resolve()): 1}
@@ -68,7 +68,7 @@ def test_does_not_archive_when_file_is_not_stale(tmp_path: Path) -> None:
     ctx = _ctx_for(now_path)
     system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
 
-    ignore = module.on_modified(ctx, system)
+    ignore = module.modified(ctx, system)
 
     assert ignore is None
     assert now_path.read_text(encoding="utf-8") == "keep\n"
@@ -93,7 +93,7 @@ def test_appends_to_end_of_past_without_overwrite(tmp_path: Path, monkeypatch) -
     module = Today()
     ctx = _ctx_for(now_path)
     system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
-    module.on_modified(ctx, system)
+    module.modified(ctx, system)
 
     expected = "-- 12.04\nsomethiung\n\n-- 01.05\nmore coffe\n"
     assert past_path.read_text(encoding="utf-8") == expected
@@ -121,7 +121,7 @@ def test_archives_when_event_is_other_file_in_same_directory(
     ctx = _ctx_for(file_path)
     system = System(event=FileModifiedEvent(str(file_path)), global_template=[], modules=[module])
 
-    ignore = module.on_modified(ctx, system)
+    ignore = module.modified(ctx, system)
 
     past_path = tmp_path / "past.md"
     assert ignore == {str(now_path.resolve()): 1, str(past_path.resolve()): 1}
@@ -167,7 +167,7 @@ def test_uses_git_timestamp_when_repo_file_is_clean(
 
     ctx = _ctx_for(now_path)
     system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
-    ignore = module.on_modified(ctx, system)
+    ignore = module.modified(ctx, system)
 
     past_path = tmp_path / "past.md"
     assert ignore == {str(now_path.resolve()): 1, str(past_path.resolve()): 1}
@@ -192,7 +192,7 @@ def test_force_fs_flag_skips_git_even_in_repo(tmp_path: Path, monkeypatch) -> No
 
     ctx = _ctx_for(now_path, force_fs=True)
     system = System(event=FileModifiedEvent(str(now_path)), global_template=[], modules=[module])
-    ignore = module.on_modified(ctx, system)
+    ignore = module.modified(ctx, system)
 
     assert ignore is None
     assert now_path.read_text(encoding="utf-8") == "keep\n"

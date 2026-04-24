@@ -97,7 +97,7 @@ class Git(AbstractModule):
         self._push_next_allowed_at: dict[str, float] = {}
         self._push_backoff_seconds: dict[str, float] = {}
 
-        # on_opened pull cooldown progression (per repo)
+        # opened pull cooldown progression (per repo)
         self._pull_next_allowed_at: dict[str, float] = {}
         self._pull_cooldown_seconds: dict[str, float] = {}
 
@@ -160,7 +160,7 @@ class Git(AbstractModule):
         self._push_backoff_seconds[repo_root] = new_backoff
         self._push_next_allowed_at[repo_root] = time.time() + new_backoff
 
-    def on_opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         ctx_path = (
             abs_expand_path(self._to_str(ctx.path)) if getattr(ctx, "path", None) else ""
         )
@@ -183,16 +183,16 @@ class Git(AbstractModule):
         )
         return None
 
-    def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx, system, "created")
 
-    def on_modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx, system, "modified")
 
-    def on_deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx, system, "deleted")
 
-    def on_moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx, system, "moved")
 
     def _handle(

@@ -98,11 +98,11 @@ class Banner(AbstractModule):
 
         return {path: 1}
 
-    def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)
 
-    def on_modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)
 
-    def on_moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._apply(path=ctx.path, config=ctx.config, arg_lines=ctx.arg_lines)

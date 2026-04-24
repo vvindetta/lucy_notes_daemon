@@ -161,16 +161,16 @@ class PlasmaSync(AbstractModule):
 
     template = PLASMA_SYNC_TEMPLATE
 
-    def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx)
 
-    def on_modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def modified(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx)
 
-    def on_moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def moved(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return self._handle(ctx)
 
-    def on_deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
+    def deleted(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
         return None
 
     def _cfg(self, ctx: Context) -> tuple[str, str, Optional[str], bool]:
