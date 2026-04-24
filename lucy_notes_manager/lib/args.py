@@ -110,6 +110,10 @@ def setup_config_and_cli_args(
         template=template,
         args=sys.argv[1:],
     )
+    defaults_by_key: Dict[str, Any] = {
+        flag.lstrip("-").replace("-", "_"): default
+        for flag, _typ, default, _desc in template
+    }
 
     # 2. Parse config-file args
     try:
@@ -125,9 +129,17 @@ def setup_config_and_cli_args(
         return known_startup_args, unknown_startup_args
 
     # 3. Merge: CLI first, than config
+    startup_overrides: Dict[str, Any] = {}
+    for key, value in known_startup_args.items():
+        if key not in defaults_by_key:
+            startup_overrides[key] = value
+            continue
+        if value != defaults_by_key[key]:
+            startup_overrides[key] = value
+
     merged_known = merge_known_args(
         args=known_config_args,
-        overwrite_args=known_startup_args,
+        overwrite_args=startup_overrides,
     )
     merged_unknown = unknown_config_args + unknown_startup_args
 

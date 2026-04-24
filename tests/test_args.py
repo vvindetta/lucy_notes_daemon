@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from lucy_notes_manager.lib.args import (
@@ -8,6 +9,7 @@ from lucy_notes_manager.lib.args import (
     get_config_args,
     merge_known_args,
     parse_args,
+    setup_config_and_cli_args,
 )
 
 
@@ -73,3 +75,31 @@ def test_get_args_from_file_skips_non_utf8_files(tmp_path: Path):
     assert known == {}
     assert unknown == []
     assert arg_lines == {}
+
+
+def test_setup_config_and_cli_args_keeps_config_values_when_cli_uses_defaults(
+    tmp_path: Path, monkeypatch
+):
+    cfg = tmp_path / "daemon.cfg"
+    cfg.write_text(
+        '--sys-notes-dirs "/notes/a" "/notes/b"\n--sys-debug\n',
+        encoding="utf-8",
+    )
+
+    template = [
+        ("--sys-config-path", str, "config.txt", ""),
+        ("--sys-notes-dirs", str, [], ""),
+        ("--sys-debug", bool, False, ""),
+    ]
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "--sys-config-path", str(cfg)],
+    )
+
+    known, unknown = setup_config_and_cli_args(template=template)
+
+    assert unknown == []
+    assert known["sys_notes_dirs"] == ["/notes/a", "/notes/b"]
+    assert known["sys_debug"] is True
