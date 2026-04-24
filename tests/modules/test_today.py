@@ -15,9 +15,10 @@ from lucy_notes_manager.modules.today import Today
 
 def _ctx_for(path: Path, *, force_fs: bool = False) -> Context:
     config: dict[str, object] = {
-        "today_now_name": ["now.md"],
-        "today_past_name": ["past.md"],
-        "today_idle_hours": [12.0],
+        "today_now_name": "now.md",
+        "today_past_name": "past.md",
+        "today_idle_hours": 12.0,
+        "today_force_fs": False,
     }
     if force_fs:
         config["today_force_fs"] = True
@@ -146,7 +147,7 @@ def test_uses_git_timestamp_when_repo_file_is_clean(
     monkeypatch.setattr(today_mod.time, "time", lambda: now_ts)
 
     module = Today()
-    monkeypatch.setattr(module, "_find_git_root", lambda _p: "/repo")
+    monkeypatch.setattr(today_mod, "find_parent_with", lambda _p, _m: "/repo")
 
     git_commit_ts = now_ts - (13.0 * 3600.0)
 
@@ -180,7 +181,7 @@ def test_force_fs_flag_skips_git_even_in_repo(tmp_path: Path, monkeypatch) -> No
     _make_stale(now_path, 1.0)
 
     module = Today()
-    monkeypatch.setattr(module, "_find_git_root", lambda _p: "/repo")
+    monkeypatch.setattr(today_mod, "find_parent_with", lambda _p, _m: "/repo")
     monkeypatch.setattr(
         today_mod.subprocess,
         "run",

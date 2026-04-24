@@ -3,6 +3,7 @@ import os
 from typing import Dict, List, Optional
 
 from lucy_notes_manager.lib import safe_notify
+from lucy_notes_manager.lib.path import canonical_path
 from lucy_notes_manager.modules.abstract_module import AbstractModule, Context, System
 from lucy_notes_manager.modules.plasma_sync.config import PLASMA_SYNC_TEMPLATE
 from lucy_notes_manager.modules.plasma_sync.core import (
@@ -40,13 +41,9 @@ _LAST_CSS_STYLE: Optional[bool] = None  # last applied --plasma-css-style state
 # ---------------- IO ---------------- #
 
 
-def _rpath(p: str) -> str:
-    return os.path.realpath(os.path.abspath(os.path.expanduser(p)))
-
-
 def _read_file(path: str) -> str:
     try:
-        with open(_rpath(path), "r", encoding="utf-8") as f:
+        with open(canonical_path(path), "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
         return ""
@@ -63,7 +60,7 @@ def _read_file(path: str) -> str:
 
 
 def _write_if_changed(path: str, content: str) -> bool:
-    path = _rpath(path)
+    path = canonical_path(path)
     old = _read_file(path)
     if old == content:
         return False
@@ -85,7 +82,7 @@ def _write_if_changed(path: str, content: str) -> bool:
 
 
 def _inc_ignore(ignore: IgnoreMap, path: str, times: int = 1) -> None:
-    absolute_path = _rpath(path)
+    absolute_path = canonical_path(path)
     ignore[absolute_path] = ignore.get(absolute_path, 0) + int(times)
 
 # ---------------- Startup init ---------------- #
@@ -99,9 +96,9 @@ def _init_from_disk_once(
         return
     _INIT_DONE = True
 
-    widget_path = _rpath(widget_path)
-    markdown_path = _rpath(markdown_path)
-    bold_widget_path = _rpath(bold_widget_path) if bold_widget_path else None
+    widget_path = canonical_path(widget_path)
+    markdown_path = canonical_path(markdown_path)
+    bold_widget_path = canonical_path(bold_widget_path) if bold_widget_path else None
 
     _LAST_CSS_STYLE = None  # unknown until first handle
 
@@ -176,68 +173,40 @@ class PlasmaSync(AbstractModule):
         return None
 
     def _cfg(self, ctx: Context) -> tuple[str, str, Optional[str], bool]:
-        cfg = ctx.config
+        if not ctx.config["plasma_widget_path"] or not ctx.config[
+            "plasma_widget_path"
+        ].strip():
+            raise ValueError("PlasmaSync: invalid value for --plasma-widget-path")
+        if not ctx.config["plasma_markdown_note_path"] or not ctx.config[
+            "plasma_markdown_note_path"
+        ].strip():
+            raise ValueError(
+                "PlasmaSync: invalid value for --plasma-markdown-note-path"
+            )
 
-        def one_value(key: str, flag: str, required: bool) -> Optional[str]:
-            val = cfg.get(key)
-            if val is None:
-                if required:
-                    raise ValueError(f"PlasmaSync: missing required {flag}")
-                return None
-            if isinstance(val, list):
-                if len(val) != 1:
-                    raise ValueError(
-                        f"PlasmaSync: {flag} expects exactly one value, got {len(val)}"
-                    )
-                val = val[0]
-            if not isinstance(val, str) or not val.strip():
-                raise ValueError(f"PlasmaSync: invalid value for {flag}")
-            return _rpath(val)
+        if ctx.config["plasma_bold_widget_path"] is not None and not ctx.config[
+            "plasma_bold_widget_path"
+        ].strip():
+            raise ValueError("PlasmaSync: invalid value for --plasma-bold-widget-path")
 
-        def bool_value(keys: List[str], default: bool) -> bool:
-            v = None
-            for k in keys:
-                if k in cfg:
-                    v = cfg.get(k)
-                    break
-            if v is None:
-                return default
-            if isinstance(v, list):
-                if len(v) != 1:
-                    raise ValueError("PlasmaSync: --plasma-css-style expects one value")
-                v = v[0]
-            if isinstance(v, bool):
-                return v
-            if isinstance(v, (int, float)):
-                return bool(v)
-            if isinstance(v, str):
-                s = v.strip().lower()
-                if s in ("1", "true", "yes", "y", "on", "enable", "enabled"):
-                    return True
-                if s in ("0", "false", "no", "n", "off", "disable", "disabled"):
-                    return False
-            raise ValueError("PlasmaSync: invalid value for --plasma-css-style")
-
-        widget_path = one_value("plasma_widget_path", "--plasma-widget-path", True)
-        markdown_path = one_value(
-            "plasma_markdown_note_path", "--plasma-markdown-note-path", True
+        return (
+            canonical_path(ctx.config["plasma_widget_path"]),
+            canonical_path(ctx.config["plasma_markdown_note_path"]),
+            canonical_path(ctx.config["plasma_bold_widget_path"])
+            if ctx.config["plasma_bold_widget_path"]
+            else None,
+            ctx.config["plasma_css_style"],
         )
-        bold_widget_path = one_value(
-            "plasma_bold_widget_path", "--plasma-bold-widget-path", False
-        )
-        css_style = bool_value(["plasma_css_style", "plasma-css-style"], default=False)
-
-        return widget_path or "", markdown_path or "", bold_widget_path, css_style
 
     def _handle(self, ctx: Context) -> Optional[IgnoreMap]:
         widget_path, markdown_path, bold_widget_path, css_style = self._cfg(ctx)
 
         _init_from_disk_once(widget_path, markdown_path, bold_widget_path)
 
-        path = _rpath(ctx.path)
-        widget_abs = _rpath(widget_path)
-        md_abs = _rpath(markdown_path)
-        bold_abs = _rpath(bold_widget_path) if bold_widget_path else None
+        path = canonical_path(ctx.path)
+        widget_abs = canonical_path(widget_path)
+        md_abs = canonical_path(markdown_path)
+        bold_abs = canonical_path(bold_widget_path) if bold_widget_path else None
 
         if path == md_abs:
             return self._from_markdown(

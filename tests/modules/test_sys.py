@@ -33,7 +33,13 @@ def test_apply_inserts_block_for_first_line_flags(tmp_path: Path):
     module = Sys()
     ctx = Context(
         path=str(note),
-        config={"mods": True, "help": True},
+        config={
+            "mods": True,
+            "help": True,
+            "config": False,
+            "sys_event": False,
+            "man": [],
+        },
         arg_lines={"mods": [1], "help": [1]},
     )
     system = System(
@@ -57,7 +63,13 @@ def test_apply_non_first_line_replacement_with_man(tmp_path: Path):
     module = Sys()
     ctx = Context(
         path=str(note),
-        config={"man": ["list"]},
+        config={
+            "mods": False,
+            "help": False,
+            "config": False,
+            "sys_event": False,
+            "man": ["list"],
+        },
         arg_lines={"man": [2]},
     )
     system = System(

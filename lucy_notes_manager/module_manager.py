@@ -35,7 +35,7 @@ class ModuleManager:
             (
                 "--sys-priority",
                 str,
-                None,
+                [],
                 "Override module execution order (lower runs first). "
                 "Format: name=int. Example: --sys-priority banner=5 renamer=20 todo=30",
             ),
@@ -52,7 +52,7 @@ class ModuleManager:
 
         self.config, _ = parse_args(args=args, template=self.template)
 
-        priority_dict = self._parse_priority_list(self.config.get("sys_priority") or [])
+        priority_dict = self._parse_priority_list(self.config["sys_priority"])
         self.modules.sort(key=lambda m: priority_dict.get(m.name, m.priority))
 
     def run(self, path: str, event: FileSystemEvent) -> Dict[str, int] | None:

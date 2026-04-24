@@ -9,8 +9,8 @@ GIT_TEMPLATE: Template = [
     (
         "--git-msg",
         str,
-        None,
-        "Base commit message. Example: --git-msg 'Notes update'. If not set, uses 'Auto-commit'.",
+        DEFAULT_COMMIT_MESSAGE,
+        "Base commit message. Example: --git-msg 'Notes update'.",
     ),
     (
         "--git-tsmsg",
@@ -21,13 +21,13 @@ GIT_TEMPLATE: Template = [
     (
         "--git-tsfmt",
         str,
-        None,
+        DEFAULT_TIMESTAMP_FORMAT,
         "Timestamp format for --git-tsmsg (Python strftime). Example: --git-tsfmt '%Y-%m-%d %H:%M:%S'.",
     ),
     (
         "--git-key",
         str,
-        None,
+        "",
         "Path to SSH private key for Git operations (no .pub). Used via GIT_SSH_COMMAND. Example: --git-key ~/.ssh/id_ed25519.",
     ),
     (

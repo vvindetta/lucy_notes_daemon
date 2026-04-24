@@ -65,9 +65,10 @@ class AbstractModule(ABC):
 
     - example:
         [
-            ("--flag", type, ["default value"], "manual string"),
+            ("--flag", type, "default value", "manual string"),
             ("--rename", str, None, "Will rename file),
-            ("--banner", str, ["date"], "Draws ASCII banner),
+            ("--banner", str, "date", "Draws ASCII banner),
+            ("--tags", str, [], "Multi-value argument),
         ]
     """
 

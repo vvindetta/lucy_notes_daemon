@@ -94,7 +94,7 @@ def test_register_push_failure_updates_backoff(git_module, monkeypatch):
 def test_update_periodic_pull_state_default_disabled(git_module):
     git_module._update_periodic_pull_state(
         repo_root="/repo",
-        config_snapshot={},
+        config_snapshot={"git_auto_pull_every_hours": 0.0},
         now_timestamp=100.0,
     )
     assert "/repo" not in git_module._periodic_pull_next_at
@@ -105,7 +105,7 @@ def test_update_periodic_pull_state_default_disabled(git_module):
 def test_update_periodic_pull_state_enables_and_emits_due_event(git_module):
     git_module._update_periodic_pull_state(
         repo_root="/repo",
-        config_snapshot={"git_auto_pull_every_hours": [2.0]},
+        config_snapshot={"git_auto_pull_every_hours": 2.0},
         now_timestamp=100.0,
     )
 
@@ -116,7 +116,7 @@ def test_update_periodic_pull_state_enables_and_emits_due_event(git_module):
 
     events = git_module._collect_due_periodic_pull_events(now_timestamp=7300.0)
     assert events == [
-        ("/repo", "scheduled_pull", [], {"git_auto_pull_every_hours": [2.0]}, True)
+        ("/repo", "scheduled_pull", [], {"git_auto_pull_every_hours": 2.0}, True)
     ]
     assert git_module._periodic_pull_next_at["/repo"] == 14500.0
 
@@ -185,7 +185,7 @@ def test_scheduled_pull_batch_only_runs_pull(git_module, monkeypatch):
 
 def test_opened_enqueues_when_repo_exists(git_module, monkeypatch):
     recorded = {}
-    monkeypatch.setattr(git_module, "_find_git_root", lambda _p: "/repo")
+    monkeypatch.setattr(git_mod, "find_parent_with", lambda _p, _m: "/repo")
     monkeypatch.setattr(
         git_module,
         "_enqueue",
@@ -207,7 +207,7 @@ def test_opened_enqueues_when_repo_exists(git_module, monkeypatch):
 
 def test_handle_moved_uses_src_and_dest_paths_for_hints(git_module, monkeypatch):
     recorded = {}
-    monkeypatch.setattr(git_module, "_find_git_root", lambda _p: "/repo")
+    monkeypatch.setattr(git_mod, "find_parent_with", lambda _p, _m: "/repo")
     monkeypatch.setattr(
         git_module,
         "_enqueue",

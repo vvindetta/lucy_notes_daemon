@@ -34,8 +34,8 @@ def test_apply_replaces_command_line_with_output_block(tmp_path: Path, monkeypat
         path=str(note),
         config={
             "c": ["echo", "hello"],
-            "cmd_timeout": [5],
-            "cmd_max_bytes": [1000],
+            "cmd_timeout": 5,
+            "cmd_max_bytes": 1000,
             "cmd_show_stdout": True,
             "cmd_show_stderr": True,
         },

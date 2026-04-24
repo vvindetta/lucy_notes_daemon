@@ -15,7 +15,7 @@ def test_apply_inserts_banner_from_first_line(tmp_path: Path, monkeypatch):
     module = Banner()
     changed = module._apply(
         path=str(path),
-        config={"banner": ["Hello"], "banner_separator": ["---"]},
+        config={"banner": "Hello", "banner_separator": "---"},
         arg_lines={"banner": [1]},
     )
 
@@ -34,7 +34,7 @@ def test_apply_replaces_non_first_line_and_keeps_remaining_text(tmp_path: Path, 
     module = Banner()
     module._apply(
         path=str(path),
-        config={"banner": ["X"], "banner_separator": ["---"]},
+        config={"banner": "X", "banner_separator": "---"},
         arg_lines={"banner": [2]},
     )
 
@@ -51,7 +51,7 @@ def test_apply_returns_none_when_banner_is_not_configured(tmp_path: Path):
     module = Banner()
     changed = module._apply(
         path=str(path),
-        config={"banner": None, "banner_separator": ["---"]},
+        config={"banner": None, "banner_separator": "---"},
         arg_lines={},
     )
     assert changed is None

@@ -9,6 +9,11 @@ from queue import Queue
 from typing import Optional
 
 from lucy_notes_manager.lib.args import Template
+from lucy_notes_manager.lib.path import (
+    abs_expand_path,
+    find_parent_with,
+    path_has_component,
+)
 from lucy_notes_manager.modules.abstract_module import (
     AbstractModule,
     Context,
@@ -21,10 +26,7 @@ from lucy_notes_manager.modules.git.config import (
     GIT_TEMPLATE,
 )
 from lucy_notes_manager.modules.git.helpers import (
-    abs_path,
-    find_git_root,
     parse_porcelain_paths,
-    path_is_inside_git_dir,
     push_rejected_needs_pull,
     to_str,
     union_resolve_text,
@@ -63,9 +65,6 @@ class Git(AbstractModule):
     template: Template = GIT_TEMPLATE
 
     _to_str = staticmethod(to_str)
-    _abs = staticmethod(abs_path)
-    _path_is_inside_git_dir = staticmethod(path_is_inside_git_dir)
-    _find_git_root = staticmethod(find_git_root)
     _parse_porcelain_paths = staticmethod(parse_porcelain_paths)
     _push_rejected_needs_pull = staticmethod(push_rejected_needs_pull)
     _union_resolve_text = staticmethod(union_resolve_text)
@@ -161,15 +160,17 @@ class Git(AbstractModule):
         self._push_next_allowed_at[repo_root] = time.time() + new_backoff
 
     def on_opened(self, ctx: Context, system: System) -> Optional[IgnoreMap]:
-        ctx_path = self._abs(self._to_str(ctx.path)) if getattr(ctx, "path", None) else ""
-        if ctx_path and self._path_is_inside_git_dir(ctx_path):
+        ctx_path = (
+            abs_expand_path(self._to_str(ctx.path)) if getattr(ctx, "path", None) else ""
+        )
+        if ctx_path and path_has_component(ctx_path, ".git"):
             return None
 
-        repo_root = self._find_git_root(ctx.path)
+        repo_root = find_parent_with(self._to_str(ctx.path), ".git")
         if not repo_root:
             return None
 
-        if not ctx.config.get("git_auto_pull", True):
+        if not ctx.config["git_auto_pull"]:
             return None
 
         self._enqueue(
@@ -206,16 +207,18 @@ class Git(AbstractModule):
             else ""
         )
 
-        source_path = self._abs(source_path_raw) if source_path_raw else ""
-        destination_path = self._abs(destination_path_value) if destination_path_value else ""
+        source_path = abs_expand_path(source_path_raw) if source_path_raw else ""
+        destination_path = (
+            abs_expand_path(destination_path_value) if destination_path_value else ""
+        )
 
-        if (source_path and self._path_is_inside_git_dir(source_path)) or (
-            destination_path and self._path_is_inside_git_dir(destination_path)
+        if (source_path and path_has_component(source_path, ".git")) or (
+            destination_path and path_has_component(destination_path, ".git")
         ):
             return None
 
-        repo_root = self._find_git_root(ctx.path) or self._find_git_root(
-            destination_path or source_path
+        repo_root = find_parent_with(self._to_str(ctx.path), ".git") or find_parent_with(
+            destination_path or source_path, ".git"
         )
         if not repo_root:
             return None

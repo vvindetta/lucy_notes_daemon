@@ -6,6 +6,7 @@ import subprocess
 from typing import Dict, Optional
 
 from lucy_notes_manager.lib import safe_notify
+from lucy_notes_manager.lib.path import abs_expand_path
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +15,11 @@ def git_environment(self, config: dict) -> Dict[str, str]:
     environment = os.environ.copy()
     environment["GIT_TERMINAL_PROMPT"] = "0"
 
-    key_path_raw = config.get("git_key")
+    key_path_raw = config["git_key"].strip()
     if not key_path_raw:
         return environment
 
-    key_path = self._abs(str(key_path_raw))
+    key_path = abs_expand_path(key_path_raw)
     environment["GIT_SSH_COMMAND"] = (
         f'ssh -i "{key_path}" '
         f"-o IdentitiesOnly=yes "

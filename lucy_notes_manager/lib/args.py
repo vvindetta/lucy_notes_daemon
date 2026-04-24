@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 Template example:
     [
         ("--rename", str, None, "Will rename file),
-        ("--banner", str, ["date"], "Draws ASCII banner),
+        ("--banner", str, "date", "Draws ASCII banner),
+        ("--tags", str, [], "Multi-value argument),
     ]
 """
 Template = List[Tuple[str, type, Any, str]]
@@ -33,12 +34,19 @@ def parse_args(args: list[str], template: Template) -> tuple[dict[str, Any], lis
                 action="store_true",  # --flag -> True
                 default=default,  # missing -> default (usually False)
             )
-        else:
+        elif isinstance(default, list):
             parser.add_argument(
                 flag,
                 dest=dest,
                 type=typ,
                 nargs="+",
+                default=list(default),
+            )
+        else:
+            parser.add_argument(
+                flag,
+                dest=dest,
+                type=typ,
                 default=default,
             )
 
@@ -106,7 +114,7 @@ def setup_config_and_cli_args(
     # 2. Parse config-file args
     try:
         known_config_args, unknown_config_args = get_config_args(
-            path=known_startup_args["sys_config_path"][0],
+            path=known_startup_args["sys_config_path"],
             template=template,
         )
     except FileNotFoundError:

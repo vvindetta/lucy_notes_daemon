@@ -67,10 +67,10 @@ def test_cfg_parses_paths_and_boolean_values(tmp_path: Path):
     ctx = Context(
         path=str(md),
         config={
-            "plasma_widget_path": [str(widget)],
-            "plasma_markdown_note_path": [str(md)],
-            "plasma_bold_widget_path": [str(mirror)],
-            "plasma_css_style": "true",
+            "plasma_widget_path": str(widget),
+            "plasma_markdown_note_path": str(md),
+            "plasma_bold_widget_path": str(mirror),
+            "plasma_css_style": True,
         },
         arg_lines={},
     )

@@ -29,7 +29,7 @@ class Banner(AbstractModule):
         (
             "--banner-separator",
             str,
-            ["---"],
+            "---",
             "Separator line inserted before the banner when the banner is placed at the top of the file. "
             "Example: --banner-separator '---' (default).",
         ),
@@ -38,15 +38,14 @@ class Banner(AbstractModule):
     def _apply(
         self, *, path: str, config: dict, arg_lines: dict
     ) -> Optional[IgnoreMap]:
-        banner_vals = config["banner"]
-        if not banner_vals:
+        if not config["banner"]:
             return None
 
-        banner_text = str(banner_vals[0]).strip()
+        banner_text = config["banner"].strip()
         if banner_text == "date":
             banner_text = str(date.today())
 
-        sep = str(config["banner_separator"][0]).strip()
+        sep = config["banner_separator"].strip()
         sep_line = sep + ("\n" if not sep.endswith("\n") else "")
 
         lineno_1based = arg_lines["banner"][0]

@@ -47,14 +47,14 @@ class Cmd(AbstractModule):
         (
             "--c",
             str,
-            None,
+            [],
             "Command tokens to execute (nargs='+'). Example: --c ls -la",
         ),
-        ("--cmd-timeout", int, [5], "Timeout in seconds for each command run."),
+        ("--cmd-timeout", int, 5, "Timeout in seconds for each command run."),
         (
             "--cmd-max-bytes",
             int,
-            [20000],
+            20000,
             "Maximum bytes of stdout/stderr written into the file (output is clipped).",
         ),
         (
@@ -73,18 +73,14 @@ class Cmd(AbstractModule):
 
     # Collect command runs by line using ctx.arg_lines["c"]
     def _collect_runs(self, ctx: Context) -> List[CmdRun]:
-        values = ctx.config.get("c")
         line_nums = ctx.arg_lines.get("c")
 
-        if not values or not line_nums:
-            return []
-
-        if not isinstance(values, list) or not isinstance(line_nums, list):
+        if not ctx.config["c"] or not line_nums:
             return []
 
         # Group tokens by their source line number
         by_line: Dict[int, List[str]] = {}
-        for tok, ln in zip(values, line_nums):
+        for tok, ln in zip(ctx.config["c"], line_nums):
             by_line.setdefault(int(ln), []).append(str(tok))
 
         runs: List[CmdRun] = []
@@ -182,17 +178,6 @@ class Cmd(AbstractModule):
         if not runs:
             return None
 
-        timeout_raw = ctx.config.get("cmd_timeout") or [5]
-        timeout = (
-            int(timeout_raw[0]) if isinstance(timeout_raw, list) else int(timeout_raw)
-        )
-
-        maxb_raw = ctx.config.get("cmd_max_bytes") or [20000]
-        max_bytes = int(maxb_raw[0]) if isinstance(maxb_raw, list) else int(maxb_raw)
-
-        show_stdout = bool(ctx.config.get("cmd_show_stdout"))
-        show_stderr = bool(ctx.config.get("cmd_show_stderr"))
-
         try:
             with open(ctx.path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
@@ -214,16 +199,16 @@ class Cmd(AbstractModule):
             _code, out_s, err_s = self._run_cmd(
                 cmd_tokens=run.cmd_tokens,
                 cwd=cwd,
-                timeout=timeout,
+                timeout=ctx.config["cmd_timeout"],
             )
 
             block = self._build_block(
                 cmd_tokens=run.cmd_tokens,
                 stdout=out_s,
                 stderr=err_s,
-                show_stdout=show_stdout,
-                show_stderr=show_stderr,
-                max_bytes=max_bytes,
+                show_stdout=ctx.config["cmd_show_stdout"],
+                show_stderr=ctx.config["cmd_show_stderr"],
+                max_bytes=ctx.config["cmd_max_bytes"],
             )
 
             # Replace the line with the block

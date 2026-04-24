@@ -12,7 +12,7 @@ def test_apply_manual_renames_file(tmp_path: Path):
     old_path.write_text("x\n", encoding="utf-8")
 
     module = Renamer()
-    changed = module._apply_manual(path=str(old_path), config={"r": ["new.md"]})
+    changed = module._apply_manual(path=str(old_path), config={"r": "new.md"})
 
     assert changed is not None
     assert (tmp_path / "new.md").exists()
@@ -26,7 +26,7 @@ def test_apply_manual_skips_when_target_exists(tmp_path: Path):
     new_path.write_text("y\n", encoding="utf-8")
 
     module = Renamer()
-    changed = module._apply_manual(path=str(old_path), config={"r": ["new.md"]})
+    changed = module._apply_manual(path=str(old_path), config={"r": "new.md"})
     assert changed is None
     assert old_path.exists()
     assert new_path.exists()

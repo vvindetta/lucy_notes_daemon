@@ -27,7 +27,7 @@ class Sys(AbstractModule):
         (
             "--man",
             str,
-            None,
+            [],
             "Argument manual. Use: --man list OR --man full OR --man <name> (example: --man todo).",
         ),
         (
@@ -166,7 +166,7 @@ class Sys(AbstractModule):
             printed_any = False
 
             for key in sorted(ctx.config.keys()):
-                current_value = ctx.config.get(key)
+                current_value = ctx.config[key]
                 default_value = defaults.get(key, None)
 
                 if key in defaults and current_value == default_value:
@@ -207,32 +207,28 @@ class Sys(AbstractModule):
             line_to_opts.setdefault(lineno_1based, set()).add(option_name)
             line_to_remove_flags.setdefault(lineno_1based, []).append(remove_flag)
 
-        if ctx.config.get("mods"):
+        if ctx.config["mods"]:
             for lineno_1based in ctx.arg_lines.get("mods") or []:
                 add_option(int(lineno_1based), "mods", "--mods")
 
-        if ctx.config.get("config"):
+        if ctx.config["config"]:
             for lineno_1based in ctx.arg_lines.get("config") or []:
                 add_option(int(lineno_1based), "config", "--config")
 
-        if ctx.config.get("help"):
+        if ctx.config["help"]:
             for lineno_1based in ctx.arg_lines.get("help") or []:
                 add_option(int(lineno_1based), "help", "--help")
 
-        if ctx.config.get("sys_event"):
+        if ctx.config["sys_event"]:
             for lineno_1based in ctx.arg_lines.get("sys_event") or []:
                 add_option(int(lineno_1based), "event", "--sys-event")
 
-        man_values = ctx.config.get("man") or []
         man_lines = ctx.arg_lines.get("man") or []
-        if isinstance(man_values, list) and isinstance(man_lines, list):
-            for man_value, lineno_1based in zip(man_values, man_lines):
-                lineno_int = int(lineno_1based)
-                add_option(lineno_int, "man", "--man")
-                if man_value is not None and str(man_value).strip():
-                    line_to_man_requests.setdefault(lineno_int, []).append(
-                        str(man_value).strip()
-                    )
+        for man_value, lineno_1based in zip(ctx.config["man"], man_lines):
+            lineno_int = int(lineno_1based)
+            add_option(lineno_int, "man", "--man")
+            if man_value.strip():
+                line_to_man_requests.setdefault(lineno_int, []).append(man_value.strip())
 
         if not line_to_opts:
             return None

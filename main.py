@@ -21,7 +21,7 @@ TEMPLATE_STARTUP_ARGS: Template = [
     (
         "--sys-config-path",
         str,
-        ["config.txt"],
+        "config.txt",
         "Path to the config file. Default: config.txt",
     ),
     (
@@ -39,7 +39,7 @@ TEMPLATE_STARTUP_ARGS: Template = [
     (
         "--sys-notes-dirs",
         str,
-        None,
+        [],
         "One or more directories to watch recursively. Example: --sys-notes_dirs ~/notes ~/work/notes",
     ),
     (
@@ -65,7 +65,7 @@ config, unknown_args = setup_config_and_cli_args(template=TEMPLATE_STARTUP_ARGS)
 
 modules = ModuleManager(modules=MODULES, args=unknown_args)
 
-log_level = logging.DEBUG if bool(config["sys_debug"]) else logging.INFO
+log_level = logging.DEBUG if config["sys_debug"] else logging.INFO
 log_format = config["sys_logging_format"]
 logging.basicConfig(
     level=log_level,
@@ -74,7 +74,7 @@ logging.basicConfig(
     force=True,
 )
 
-if not config.get("sys_notes_dirs"):
+if not config["sys_notes_dirs"]:
     raise ValueError("No --sys-notes-dirs was setuped")
 if "/path/to/note/dir" in config["sys_notes_dirs"]:
     raise Exception(

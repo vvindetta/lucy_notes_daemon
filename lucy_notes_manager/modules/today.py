@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
+from lucy_notes_manager.lib.path import find_parent_with
 from lucy_notes_manager.lib.args import Template
 from lucy_notes_manager.modules.abstract_module import (
     AbstractModule,
@@ -13,7 +14,6 @@ from lucy_notes_manager.modules.abstract_module import (
     IgnoreMap,
     System,
 )
-from lucy_notes_manager.modules.git.helpers import find_git_root
 
 
 class Today(AbstractModule):
@@ -24,19 +24,19 @@ class Today(AbstractModule):
         (
             "--today-now-name",
             str,
-            ["now.md"],
+            "now.md",
             "Name of active note file to archive when stale. Default: now.md",
         ),
         (
             "--today-past-name",
             str,
-            ["past.md"],
+            "past.md",
             "Name of archive file (same directory as now file). Default: past.md",
         ),
         (
             "--today-idle-hours",
             float,
-            [12.0],
+            12.0,
             "Archive now file when its last modification age is >= this many hours. Default: 12",
         ),
         (
@@ -47,31 +47,28 @@ class Today(AbstractModule):
         ),
     ]
 
-    _find_git_root = staticmethod(find_git_root)
-
-    def _one(self, config: dict, key: str, default):
-        value = config.get(key, default)
-        if isinstance(value, list):
-            return value[0] if value else default
-        return value
-
     def _resolve_paths(self, ctx: Context) -> tuple[str, str] | None:
-        now_name = str(self._one(ctx.config, "today_now_name", "now.md")).strip() or "now.md"
-        past_name = (
-            str(self._one(ctx.config, "today_past_name", "past.md")).strip() or "past.md"
-        )
+        if (
+            not ctx.config["today_now_name"].strip()
+            or not ctx.config["today_past_name"].strip()
+        ):
+            return None
 
-        if now_name == past_name:
+        if ctx.config["today_now_name"].strip() == ctx.config["today_past_name"].strip():
             return None
 
         event_path = os.path.abspath(ctx.path)
         parent_dir = os.path.dirname(event_path)
-        now_path = os.path.abspath(os.path.join(parent_dir, now_name))
-        past_path = os.path.abspath(os.path.join(parent_dir, past_name))
+        now_path = os.path.abspath(
+            os.path.join(parent_dir, ctx.config["today_now_name"].strip())
+        )
+        past_path = os.path.abspath(
+            os.path.join(parent_dir, ctx.config["today_past_name"].strip())
+        )
         return now_path, past_path
 
     def _git_last_activity_timestamp(self, now_path: str) -> Optional[float]:
-        repo_root = self._find_git_root(now_path)
+        repo_root = find_parent_with(now_path, ".git")
         if not repo_root:
             return None
 
@@ -122,7 +119,7 @@ class Today(AbstractModule):
             return None
 
     def _last_activity_timestamp(self, ctx: Context, now_path: str) -> Optional[float]:
-        if not bool(self._one(ctx.config, "today_force_fs", False)):
+        if not ctx.config["today_force_fs"]:
             git_timestamp = self._git_last_activity_timestamp(now_path)
             if git_timestamp is not None:
                 return git_timestamp
@@ -168,8 +165,7 @@ class Today(AbstractModule):
             return None
         now_path, past_path = resolved
 
-        idle_hours = float(self._one(ctx.config, "today_idle_hours", 12.0))
-        if not self._is_stale(ctx, now_path, idle_hours):
+        if not self._is_stale(ctx, now_path, ctx.config["today_idle_hours"]):
             return None
 
         try:

@@ -26,12 +26,7 @@ class Renamer(AbstractModule):
     ]
 
     def _apply_manual(self, *, path: str, config: dict) -> Optional[IgnoreMap]:
-        values = config.get("r")
-        if not values:
-            return None
-
-        new_name = str(values[0]).strip()
-        if not new_name:
+        if not config["r"] or not config["r"].strip():
             return None
 
         old_path = path
@@ -39,7 +34,7 @@ class Renamer(AbstractModule):
             return None
 
         dir_path = os.path.dirname(old_path)
-        new_path = os.path.abspath(os.path.join(dir_path, new_name))
+        new_path = os.path.abspath(os.path.join(dir_path, config["r"].strip()))
 
         if old_path == new_path:
             return None
@@ -53,7 +48,7 @@ class Renamer(AbstractModule):
             return None
 
     def _apply_auto_on_create(self, *, path: str, config: dict) -> Optional[IgnoreMap]:
-        if not config.get("auto_rename", False):
+        if not config["auto_rename"]:
             return None
 
         old_path = path

@@ -27,8 +27,7 @@ class TodoFormatter(AbstractModule):
     def _apply(
         self, *, path: str, config: dict, arg_lines: dict
     ) -> Optional[IgnoreMap]:
-        todo_vals = config["todo"]
-        if not todo_vals:
+        if not config["todo"]:
             return None
 
         if not os.path.isfile(path):

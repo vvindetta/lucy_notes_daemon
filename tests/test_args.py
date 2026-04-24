@@ -15,17 +15,17 @@ def test_parse_args_handles_bool_and_nargs():
     template = [
         ("--todo", bool, False, ""),
         ("--name", str, None, ""),
-        ("--count", int, 3, ""),
+        ("--tags", str, [], ""),
     ]
 
     known, unknown = parse_args(
-        args=["--todo", "--name", "alice", "bob", "--unknown"],
+        args=["--todo", "--name", "alice", "--tags", "x", "y", "--unknown"],
         template=template,
     )
 
     assert known["todo"] is True
-    assert known["name"] == ["alice", "bob"]
-    assert known["count"] == 3
+    assert known["name"] == "alice"
+    assert known["tags"] == ["x", "y"]
     assert unknown == ["--unknown"]
 
 
@@ -41,8 +41,8 @@ def test_get_config_args_reads_lines_and_ignores_comments(tmp_path: Path):
     ]
 
     known, unknown = get_config_args(str(cfg), template)
-    assert known["name"] == ["jane"]
-    assert known["count"] == [7]
+    assert known["name"] == "jane"
+    assert known["count"] == 7
     assert unknown == []
 
 

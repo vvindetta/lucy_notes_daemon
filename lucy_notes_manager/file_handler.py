@@ -5,6 +5,7 @@ from typing import Dict
 
 from watchdog.events import FileSystemEventHandler
 
+from lucy_notes_manager.lib.path import canonical_path, path_has_component
 from lucy_notes_manager.module_manager import ModuleManager
 
 logger = logging.getLogger(__name__)
@@ -33,15 +34,15 @@ class FileHandler(FileSystemEventHandler):
             return
 
         file_path = event.dest_path if event.event_type == "moved" else event.src_path
-        file_path = self._abs(file_path)
+        file_path = canonical_path(file_path)
 
-        if any(part == ".git" for part in file_path.split(os.sep)):
+        if path_has_component(file_path, ".git"):
             return
 
         if event.event_type == "moved":
-            if self._check_and_delete_ignore(
-                self._abs(event.src_path)
-            ) or self._check_and_delete_ignore(self._abs(event.dest_path)):
+            if self._check_and_delete_ignore(canonical_path(event.src_path)) or self._check_and_delete_ignore(
+                canonical_path(event.dest_path)
+            ):
                 return
             logger.info(f"EVENT: Moved: {event.src_path} → {event.dest_path}")
         else:
@@ -60,19 +61,19 @@ class FileHandler(FileSystemEventHandler):
     def _mark_to_ignore(self, ignore_paths: Dict[str, int]) -> None:
         for path, count in ignore_paths.items():
             new_count = self._bump_ignore(path, count)
-            logger.info("MARKED TO IGNORE: %s (count=%d)", self._abs(path), new_count)
+            logger.info("MARKED TO IGNORE: %s (count=%d)", canonical_path(path), new_count)
 
     def _check_and_delete_ignore(self, input_path: str) -> bool:
-        cur = self._ignore_paths.get(self._abs(input_path), 0)
+        cur = self._ignore_paths.get(canonical_path(input_path), 0)
         if cur <= 0:
             return False
 
         remaining = self._bump_ignore(input_path, -1)
-        logger.info("IGNORED: %s (remaining=%d)\n\n", self._abs(input_path), remaining)
+        logger.info("IGNORED: %s (remaining=%d)\n\n", canonical_path(input_path), remaining)
         return True
 
     def _bump_ignore(self, path: str, delta: int) -> int:
-        abs_path = self._abs(path)
+        abs_path = canonical_path(path)
         cur = self._ignore_paths.get(abs_path, 0)
         new = cur + int(delta)
 
@@ -103,7 +104,7 @@ class FileHandler(FileSystemEventHandler):
         if self._open_cooldown_seconds <= 0:
             return True
 
-        abs_path = self._abs(file_path)
+        abs_path = canonical_path(file_path)
         now = time.monotonic()
 
         self._opened_events_seen += 1
@@ -116,21 +117,6 @@ class FileHandler(FileSystemEventHandler):
 
         self._last_open_ts[abs_path] = now
         return True
-
-    def _abs(self, p: str) -> str:
-        """
-        Canonical path for ignore-map keys and event paths.
-        This fixes mismatches after reboot / different path forms:
-        - expands ~
-        - removes .. and .
-        - converts to absolute
-        - resolves symlinks (realpath)
-        """
-        p = os.path.expanduser(p)
-        p = os.path.normpath(p)
-        p = os.path.abspath(p)
-        p = os.path.realpath(p)
-        return p
 
     def on_modified(self, event):
         self._process_file(event=event)
