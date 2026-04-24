@@ -157,6 +157,7 @@ def _ensure_widget_render_mode(
 class PlasmaSync(AbstractModule):
     name: str = "plasma_sync"
     priority: int = 30
+    experimental: bool = True
 
     template = PLASMA_SYNC_TEMPLATE
 

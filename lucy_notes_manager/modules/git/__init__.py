@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 class Git(AbstractModule):
     name: str = "git"
     priority: int = 50
+    experimental: bool = True
 
     default_commit_message: str = DEFAULT_COMMIT_MESSAGE
     default_timestamp_format: str = DEFAULT_TIMESTAMP_FORMAT

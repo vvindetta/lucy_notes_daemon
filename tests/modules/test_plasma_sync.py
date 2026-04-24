@@ -31,6 +31,10 @@ def test_md_doc_roundtrip_preserves_checkbox_and_bold():
     assert plasma_mod._doc_to_md(doc) == md
 
 
+def test_plasma_sync_is_marked_experimental():
+    assert PlasmaSync().experimental is True
+
+
 def test_doc_to_plasma_html_mode_switch_changes_structure():
     doc = [DocLine(kind="li", state="unchecked", segs=[("Task", False)])]
 

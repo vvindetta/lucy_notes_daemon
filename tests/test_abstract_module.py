@@ -15,6 +15,7 @@ def test_default_module_hooks_are_noops():
     ctx = Context(path="/tmp/x", config={}, arg_lines={})
     system = System(event=FileModifiedEvent("/tmp/x"), global_template=[], modules=[module])
 
+    assert module.experimental is False
     assert module.on_created(ctx, system) is None
     assert module.on_modified(ctx, system) is None
     assert module.on_moved(ctx, system) is None

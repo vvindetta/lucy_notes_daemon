@@ -74,6 +74,7 @@ class AbstractModule(ABC):
 
     name: str
     priority: int = 15
+    experimental: bool = False
     template: Template = []
 
     def on_created(self, ctx: Context, system: System) -> Optional[IgnoreMap]:

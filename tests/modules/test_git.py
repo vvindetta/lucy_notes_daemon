@@ -25,6 +25,10 @@ def git_module(monkeypatch):
     return Git()
 
 
+def test_git_module_is_marked_experimental(git_module):
+    assert git_module.experimental is True
+
+
 def test_parse_porcelain_paths_handles_regular_and_renamed(git_module):
     text = " M a.txt\nR  old.md -> new.md\n?? x.py\n"
     assert git_module._parse_porcelain_paths(text) == ["a.txt", "new.md", "x.py"]

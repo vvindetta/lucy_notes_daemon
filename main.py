@@ -9,13 +9,14 @@ from lucy_notes_manager.lib.args import Template, setup_config_and_cli_args
 from lucy_notes_manager.module_manager import ModuleManager
 from lucy_notes_manager.modules.abstract_module import AbstractModule
 from lucy_notes_manager.modules.banner import Banner
-from lucy_notes_manager.modules.cmd import Cmd
 from lucy_notes_manager.modules.git import Git
 from lucy_notes_manager.modules.plasma_sync import PlasmaSync
 from lucy_notes_manager.modules.renamer import Renamer
 from lucy_notes_manager.modules.sys import Sys
 from lucy_notes_manager.modules.today import Today
 from lucy_notes_manager.modules.todo_formatter import TodoFormatter
+
+# from lucy_notes_manager.modules.cmd import Cmd
 
 TEMPLATE_STARTUP_ARGS: Template = [
     (
@@ -48,6 +49,12 @@ TEMPLATE_STARTUP_ARGS: Template = [
         20,
         "Cooldown for 'on_opened' events per file, in seconds. Prevents editor spam. Default: 30 seconds).",
     ),
+    (
+        "--sys-enable-experimental-modules",
+        bool,
+        False,
+        "Enable modules marked as experimental.",
+    ),
 ]
 
 MODULES: List[AbstractModule] = [
@@ -56,14 +63,21 @@ MODULES: List[AbstractModule] = [
     TodoFormatter(),
     Today(),
     Sys(),
-    # Git(),
-    # PlasmaSync(),
+    Git(),
+    PlasmaSync(),
     # Cmd(),
 ]
 
 config, unknown_args = setup_config_and_cli_args(template=TEMPLATE_STARTUP_ARGS)
 
-modules = ModuleManager(modules=MODULES, args=unknown_args)
+modules = ModuleManager(
+    modules=(
+        MODULES
+        if config["sys_enable_experimental_modules"]
+        else [module for module in MODULES if not module.experimental]
+    ),
+    args=unknown_args,
+)
 
 log_level = logging.DEBUG if config["sys_debug"] else logging.INFO
 log_format = config["sys_logging_format"]
