@@ -4,6 +4,7 @@ from lucy_notes_manager.lib.args import Template
 
 DEFAULT_COMMIT_MESSAGE: str = "Auto-commit"
 DEFAULT_TIMESTAMP_FORMAT: str = "%Y-%m-%d_%H-%M-%S"
+DEFAULT_MAX_BATCH_SECONDS: float = 8.0
 
 GIT_TEMPLATE: Template = [
     (
@@ -78,6 +79,13 @@ GIT_TEMPLATE: Template = [
         float,
         0.8,
         "Debounce window in seconds: group file events and commit/push once after changes calm down.",
+    ),
+    (
+        "--git-max-batch-seconds",
+        float,
+        DEFAULT_MAX_BATCH_SECONDS,
+        "Maximum time to keep a non-pull batch pending while new events keep arriving. "
+        "Set 0 to disable forced flush.",
     ),
     (
         "--git-timeout-sec",

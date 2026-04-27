@@ -12,6 +12,16 @@ logger = logging.getLogger(__name__)
 _PULL_ONLY_EVENT_TYPES = {"opened", "scheduled_pull"}
 
 
+def should_force_flush_batch(batch: _RepoBatch, now_timestamp: float) -> bool:
+    if batch.max_batch_seconds <= 0.0:
+        return False
+    if not batch.event_types:
+        return False
+    if batch.event_types.issubset(_PULL_ONLY_EVENT_TYPES):
+        return False
+    return (now_timestamp - batch.first_event_at) >= batch.max_batch_seconds
+
+
 def update_periodic_pull_state(
     self, repo_root: str, config_snapshot: dict, now_timestamp: float
 ) -> None:
@@ -98,6 +108,7 @@ def worker_loop(self) -> None:
                         backoff_max_seconds=config_snapshot["git_push_backoff_max_sec"],
                         pull_cooldown_min_seconds=config_snapshot["git_pull_cooldown_min_sec"],
                         pull_cooldown_max_seconds=config_snapshot["git_pull_cooldown_max_sec"],
+                        max_batch_seconds=config_snapshot["git_max_batch_seconds"],
                         wants_pull=wants_pull,
                         auto_merge_on_push=config_snapshot["git_auto_merge_on_push"],
                         auto_set_upstream=config_snapshot["git_auto_set_upstream"],
@@ -123,6 +134,7 @@ def worker_loop(self) -> None:
                 existing_batch.pull_cooldown_max_seconds = config_snapshot[
                     "git_pull_cooldown_max_sec"
                 ]
+                existing_batch.max_batch_seconds = config_snapshot["git_max_batch_seconds"]
 
                 existing_batch.auto_merge_on_push = config_snapshot[
                     "git_auto_merge_on_push"
@@ -147,7 +159,9 @@ def worker_loop(self) -> None:
         periodic_pull_events: list[tuple[str, str, list[str], dict, bool]] = []
         with self._pending_lock:
             for repo_root_key, batch in list(self._pending_batches.items()):
-                if current_timestamp - batch.last_event_at >= batch.debounce_seconds:
+                quiet_due = current_timestamp - batch.last_event_at >= batch.debounce_seconds
+                forced_due = should_force_flush_batch(batch, current_timestamp)
+                if quiet_due or forced_due:
                     due_batches.append(batch)
                     del self._pending_batches[repo_root_key]
             periodic_pull_events = self._collect_due_periodic_pull_events(current_timestamp)

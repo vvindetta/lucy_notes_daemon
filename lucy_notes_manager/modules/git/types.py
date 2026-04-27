@@ -24,12 +24,14 @@ class _RepoBatch:
 
     pull_cooldown_min_seconds: float
     pull_cooldown_max_seconds: float
+    max_batch_seconds: float
 
     wants_pull: bool = False
     auto_merge_on_push: bool = True
     auto_set_upstream: bool = True
     autoresolve_mode: str = "union"  # none|ours|theirs|union
 
+    first_event_at: float = field(default_factory=time.time)
     last_event_at: float = field(default_factory=time.time)
     event_types: set[str] = field(default_factory=set)
     hinted_paths: set[str] = field(default_factory=set)

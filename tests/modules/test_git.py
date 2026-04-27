@@ -8,6 +8,7 @@ from watchdog.events import FileMovedEvent, FileOpenedEvent
 import lucy_notes_manager.modules.git as git_mod
 from lucy_notes_manager.modules.abstract_module import Context, System
 from lucy_notes_manager.modules.git import Git, _RepoBatch
+from lucy_notes_manager.modules.git.worker import should_force_flush_batch
 
 
 @pytest.fixture
@@ -68,6 +69,7 @@ def test_build_commit_message_includes_event_summary_and_names(git_module, monke
         backoff_max_seconds=8.0,
         pull_cooldown_min_seconds=1.0,
         pull_cooldown_max_seconds=4.0,
+        max_batch_seconds=8.0,
         event_types={"modified", "created"},
         hinted_paths={"/repo/hinted.md"},
     )
@@ -179,12 +181,39 @@ def test_scheduled_pull_batch_only_runs_pull(git_module, monkeypatch):
         backoff_max_seconds=8.0,
         pull_cooldown_min_seconds=1.0,
         pull_cooldown_max_seconds=4.0,
+        max_batch_seconds=8.0,
         wants_pull=True,
         event_types={"scheduled_pull"},
     )
 
     git_module._process_batch(batch)
     assert pull_calls == [("/repo", 6.0, 5.0)]
+
+
+def test_should_force_flush_batch_for_non_pull_batches():
+    batch = _RepoBatch(
+        repo_root="/repo",
+        base_message="Auto",
+        add_timestamp_to_message=False,
+        timestamp_format="%Y",
+        environment={},
+        debounce_seconds=0.5,
+        git_timeout_seconds=5.0,
+        pull_timeout_seconds=6.0,
+        push_timeout_seconds=7.0,
+        backoff_start_seconds=2.0,
+        backoff_max_seconds=8.0,
+        pull_cooldown_min_seconds=1.0,
+        pull_cooldown_max_seconds=4.0,
+        max_batch_seconds=5.0,
+        first_event_at=10.0,
+        event_types={"opened"},
+    )
+
+    assert should_force_flush_batch(batch, now_timestamp=20.0) is False
+
+    batch.event_types = {"opened", "modified"}
+    assert should_force_flush_batch(batch, now_timestamp=20.0) is True
 
 
 def test_opened_enqueues_when_repo_exists(git_module, monkeypatch):
